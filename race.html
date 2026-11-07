@@ -14,7 +14,13 @@
   html, body { margin:0; height:100%; overflow:hidden; background:#3d8b3d; font-family: system-ui, sans-serif;
                touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
                -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
-  canvas#c { display:block; position:fixed; left:0; top:0; }   /* grootte zet maat() in pixels: 100vh klopt niet op iPhone */
+  canvas#c, canvas#c3d { display:block; position:fixed; left:0; top:0; }   /* grootte zet maat() in pixels: 100vh klopt niet op iPhone */
+  canvas#c3d { z-index:0; } canvas#c { z-index:1; pointer-events:none; }
+  #hud, #aftellen, .knoppen, .scherm { z-index:2; }
+  .cameras { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .camera { font:inherit; font-size:18px; font-weight:700; padding:10px 18px; border-radius:14px; border:3px solid transparent;
+            background:#fff2; color:#fff; cursor:pointer; }
+  .camera.gekozen { border-color:#ffd34d; background:#fff3; }
   [hidden] { display:none !important; }
   #hud { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left));
          color:#fff; font-weight:800; font-size:20px; line-height:1.35; text-shadow:0 2px 4px #000a; pointer-events:none; }
@@ -54,6 +60,7 @@
 </style>
 </head>
 <body>
+<canvas id="c3d" hidden></canvas>
 <canvas id="c"></canvas>
 <div id="hud" hidden></div>
 <div id="aftellen" hidden></div>
@@ -67,6 +74,11 @@
   <div class="circuits" id="circuits"></div>
   <p>Kies de kleur van je auto:</p>
   <div class="kleuren" id="kleuren"></div>
+  <p>Kies je camera:</p>
+  <div class="cameras">
+    <button class="camera" data-camera="boven">🗺️ Van boven</button>
+    <button class="camera" data-camera="achter">🎥 Achter de auto</button>
+  </div>
   <button class="groot" id="start">Start!</button>
   <a href="index.html" class="klein" style="text-decoration:none;color:#fff;padding:8px 16px;border-radius:12px;background:#fff3">🏠 Terug naar het begin</a>
   <p>Rijd 3 rondes en kom als eerste over de finish. Blijf op de weg: naast de weg ga je trager!<br>
@@ -97,6 +109,7 @@ document.addEventListener('gesturestart', e => e.preventDefault());   // iOS: ni
 const cv = document.getElementById('c');
 let ctx = cv.getContext('2d');
 let W, H, dpr, rand = { boven: 0, rechts: 0 };
+let drie = null;   // 3D-weergave, pas geladen als je "achter de auto" kiest
 const randMeter = document.createElement('div');   // meet de inkeping/afgeronde hoeken van de iPhone
 randMeter.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right)';
 document.body.appendChild(randMeter);
@@ -107,6 +120,8 @@ function maat() {
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
   const s = getComputedStyle(randMeter);
   rand = { boven: parseFloat(s.paddingTop) || 0, rechts: parseFloat(s.paddingRight) || 0 };
+  const c3 = document.getElementById('c3d'); c3.style.width = W + 'px'; c3.style.height = H + 'px';
+  if (drie) drie.grootte(W, H);
 }
 addEventListener('resize', maat);
 addEventListener('orientationchange', () => setTimeout(maat, 300));
@@ -350,20 +365,48 @@ function tekenOndergrond(c, t, g) {   // grond, zee/lava en weg (ook gebruikt vo
   ctx.strokeStyle = '#5a5f66'; ctx.lineWidth = BREED; ctx.stroke(c._weg);
 }
 
-function tekenWereld(zoom) {
-  const cx = speler.x + Math.cos(speler.a) * speler.v * 0.25, cy = speler.y + Math.sin(speler.a) * speler.v * 0.25;
-  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * (W / 2 - cx * zoom), dpr * (H / 2 - cy * zoom));
-  tekenOndergrond(C, T, grenzen);
-  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 4; ctx.setLineDash([40, 40]); ctx.stroke(weg); ctx.setLineDash([]);
-
-  const s = pad[0];   // start- en finishlijn
+function tekenStartlijn() {
+  const s = pad[0];
   ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.hoek);
   for (let r = 0; r < 2; r++) for (let k = 0; k < 16; k++) {
     ctx.fillStyle = (r + k) % 2 ? '#111' : '#fff';
     ctx.fillRect(-10 + r * 10, -BREED / 2 + k * BREED / 16, 10, BREED / 16);
   }
   ctx.restore();
+}
 
+/* ---------- 3D: "achter de auto" ----------
+   race3d.js (met Three.js) wordt pas geladen als je die camera kiest. De grond (gras, weg, zee, lava)
+   is dezelfde tekening als van boven, als één grote afbeelding op de 3D-grond gelegd. */
+let camera = localStorage.getItem('raceCamera') || 'boven', drieCircuit = null;
+function maakGrondTextuur() {
+  const g = grenzen, w = g.x1 - g.x0, h = g.y1 - g.y0;
+  const max = document.body.classList.contains('aanraak') ? 2560 : 4096, s = Math.min(max / w, max / h, 1.5);
+  const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
+  const oud = ctx; ctx = c.getContext('2d');
+  ctx.setTransform(s, 0, 0, s, -g.x0 * s, -g.y0 * s);
+  tekenOndergrond(C, T, g);
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 4; ctx.setLineDash([40, 40]); ctx.stroke(weg); ctx.setLineDash([]);
+  tekenStartlijn();
+  ctx = oud;
+  return { canvas: c, x0: g.x0, y0: g.y0, w, h };
+}
+async function laadDrie() {
+  if (!drie) { const m = await import('./race3d.js'); drie = m.maakDrie(document.getElementById('c3d')); drie.grootte(W, H); }
+  if (drieCircuit !== C) {
+    drie.bouw({ circuit: C, thema: T, themaNaam: C.thema, textuur: maakGrondTextuur(), versiering, pad, breed: BREED });
+    drieCircuit = C;
+  }
+  drie.reset();
+}
+
+function tekenWereld(zoom) {
+  const cx = speler.x + Math.cos(speler.a) * speler.v * 0.25, cy = speler.y + Math.sin(speler.a) * speler.v * 0.25;
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * (W / 2 - cx * zoom), dpr * (H / 2 - cy * zoom));
+  tekenOndergrond(C, T, grenzen);
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 4; ctx.setLineDash([40, 40]); ctx.stroke(weg); ctx.setLineDash([]);
+
+  tekenStartlijn();
   for (const s of stof) { ctx.fillStyle = C.thema === 'sneeuw' ? `rgba(255,255,255,${s.t})` : `rgba(150,120,70,${s.t})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill(); }
   autos.forEach(tekenAuto);
   for (const v of versiering) TEKEN[v.soort](v);
@@ -405,8 +448,15 @@ function lus(nu) {
   }
   stof.forEach(s => { s.t -= dt; s.r += dt * 14; }); stof = stof.filter(s => s.t > 0);
 
-  const zoom = Math.max(0.5, Math.min(1, Math.min(W, H) / 650));
-  tekenWereld(zoom);
+  const in3d = camera === 'achter' && drie && drieCircuit === C && fase !== 'menu' && fase !== 'laden';
+  document.getElementById('c3d').hidden = !in3d;
+  if (in3d) {
+    drie.teken(autos, speler, dt);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);   // 2D-laag enkel voor het kaartje
+  } else {
+    const zoom = Math.max(0.5, Math.min(1, Math.min(W, H) / 650));
+    tekenWereld(zoom);
+  }
   if (fase !== 'menu') tekenKaartje();
   if (fase !== 'menu') {
     const plaats = plaatsen().indexOf(speler) + 1;
@@ -435,10 +485,31 @@ function start() {
   document.getElementById('hud').hidden = false;
   document.querySelectorAll('.knoppen').forEach(k => k.hidden = false);
   maakAutos(); tijd = 0; aftel = 3; finishVolgorde = []; stof = []; fase = 'aftellen';
+  if (camera === 'achter' && (!drie || drieCircuit !== C)) {
+    fase = 'laden';
+    const el = document.getElementById('aftellen'), mijnStart = ++startTeller;
+    el.hidden = false; el.style.fontSize = '36px'; el.textContent = '3D-wereld laden…';
+    laadDrie().then(() => {
+      if (mijnStart !== startTeller || fase !== 'laden') return;
+      el.style.fontSize = ''; fase = 'aftellen';
+    }).catch(fout => {
+      console.error(fout);
+      if (mijnStart !== startTeller) return;
+      el.style.fontSize = '24px'; el.textContent = '3D lukt niet op dit toestel: we racen van boven.';
+      zetCamera('boven');
+      setTimeout(() => { if (mijnStart === startTeller) { el.style.fontSize = ''; fase = 'aftellen'; } }, 1800);
+    });
+  }
+}
+let startTeller = 0;
+
+function zetCamera(c) {
+  camera = c; localStorage.setItem('raceCamera', c);
+  document.querySelectorAll('[data-camera]').forEach(x => x.classList.toggle('gekozen', x.dataset.camera === c));
 }
 
 function toonMenu() {
-  fase = 'menu';
+  fase = 'menu'; startTeller++;
   document.getElementById('einde').hidden = true;
   document.getElementById('hud').hidden = true;
   document.getElementById('aftellen').hidden = true;
@@ -484,6 +555,8 @@ document.getElementById('kleuren').addEventListener('click', e => {
 document.getElementById('start').onclick = start;
 document.getElementById('opnieuw').onclick = start;
 document.getElementById('naarMenu').onclick = toonMenu;
+document.querySelectorAll('[data-camera]').forEach(b => b.onclick = () => zetCamera(b.dataset.camera));
+zetCamera(camera);
 
 laadCircuit(CIRCUITS.find(c => c.id === localStorage.getItem('raceCircuit')) || CIRCUITS[0]);
 maakAutos();
@@ -491,6 +564,7 @@ vulCircuitKaarten();
 
 // Adres #start=vulkaan start meteen op dat circuit (handig om te testen)
 const hash = new URLSearchParams(location.hash.slice(1));
+if (hash.get('camera')) zetCamera(hash.get('camera'));
 if (hash.get('start')) { const c = CIRCUITS.find(c => c.id === hash.get('start')); if (c) kiesCircuit(c); start(); }
 if (hash.has('zelftest')) {   // elk circuit: ligt de weg nergens te dicht bij zichzelf, en rijden alle auto's 3 rondes uit?
   const uit = [];
