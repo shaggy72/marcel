@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Marcels Race</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#3d8b3d; font-family: system-ui, sans-serif;
+               touch-action:none; user-select:none; -webkit-user-select:none; }
+  canvas#c { display:block; width:100vw; height:100vh; }
+  [hidden] { display:none !important; }
+  #hud { position:fixed; top:10px; left:12px; color:#fff; font-weight:800; font-size:20px; line-height:1.35;
+         text-shadow:0 2px 4px #000a; pointer-events:none; }
+  .scherm { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+            background:#000b; color:#fff; text-align:center; gap:14px; padding:16px; overflow-y:auto; touch-action:pan-y; }
+  .scherm h1 { font-size:40px; margin:0; }
+  .scherm p { margin:0; font-size:17px; max-width:460px; }
+  .kleuren { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .kleur { width:50px; height:50px; border-radius:12px; border:4px solid transparent; cursor:pointer; }
+  .kleur.gekozen { border-color:#fff; transform:scale(1.1); }
+  .circuits { display:grid; grid-template-columns:repeat(3, 160px); gap:10px; }
+  @media (max-width:540px) { .circuits { grid-template-columns:repeat(2, 150px); } }
+  .circuit { background:#fff2; border:3px solid transparent; border-radius:14px; padding:6px; cursor:pointer; color:#fff; }
+  .circuit.gekozen { border-color:#ffd34d; background:#fff3; }
+  .circuit canvas { width:100%; aspect-ratio:3/2; border-radius:9px; display:block; }
+  .circuit b { display:block; margin-top:4px; font-size:15px; }
+  .circuit small { display:block; font-size:12px; opacity:.85; min-height:15px; }
+  button.groot { font:inherit; font-size:26px; font-weight:800; padding:12px 34px; border:0; border-radius:16px; background:#f39c12; color:#fff; cursor:pointer; }
+  button.klein { font:inherit; font-size:18px; font-weight:700; padding:10px 20px; border:0; border-radius:14px; background:#fff3; color:#fff; cursor:pointer; }
+  #uitslag { font-size:20px; line-height:1.6; }
+  #aftellen { position:fixed; inset:0; display:grid; place-items:center; font-size:130px; font-weight:900; color:#fff;
+              text-shadow:0 4px 14px #000; pointer-events:none; }
+  .knoppen { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom)); display:flex; gap:14px; }
+  .knoppen.links { left:16px; } .knoppen.rechts { right:16px; }
+  .knop { width:86px; height:86px; border-radius:50%; background:#fff3; border:3px solid #fff9; color:#fff; font-size:34px;
+          display:grid; place-items:center; touch-action:none; }
+  .knop.aan { background:#fff8; }
+  @media (hover:hover) and (pointer:fine) { .knoppen { display:none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" hidden></div>
+<div id="aftellen" hidden></div>
+
+<div class="knoppen links" hidden><div class="knop" data-k="links">◀</div><div class="knop" data-k="rechts">▶</div></div>
+<div class="knoppen rechts" hidden><div class="knop" data-k="rem">🛑</div><div class="knop" data-k="gas">⛽</div></div>
+
+<div class="scherm" id="menu">
+  <h1>🏁 Marcels Race</h1>
+  <p>Kies je circuit:</p>
+  <div class="circuits" id="circuits"></div>
+  <p>Kies de kleur van je auto:</p>
+  <div class="kleuren" id="kleuren"></div>
+  <button class="groot" id="start">Start!</button>
+  <a href="index.html" class="klein" style="text-decoration:none;color:#fff;padding:8px 16px;border-radius:12px;background:#fff3">🏠 Terug naar het begin</a>
+  <p>Rijd 3 rondes en kom als eerste over de finish. Blijf op de weg: naast de weg ga je trager!<br>
+     ⌨️ Pijltjes of W A S D · 📱 Tablet: knoppen onderaan</p>
+</div>
+
+<div class="scherm" id="einde" hidden>
+  <h1 id="eindTitel"></h1>
+  <div id="uitslag"></div>
+  <button class="groot" id="opnieuw">Nog een keer!</button>
+  <button class="klein" id="naarMenu">Ander circuit kiezen</button>
+  <a href="index.html" style="color:#fff">🏠 Terug naar het begin</a>
+</div>
+
+<script>
+const cv = document.getElementById('c');
+let ctx = cv.getContext('2d');
+let W, H, dpr;
+function maat() { dpr = devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; }
+addEventListener('resize', maat); maat();
+
+/* ---------- Circuits en hun sfeer ---------- */
+const THEMAS = {
+  kamp:     { grond:'#3d8b3d', streep:'#459945', berm:'rgba(217,195,140,.35)', stoep:'#d63a2c', decor:[['boom',.88],['tent',.12]] },
+  woestijn: { grond:'#e2c07a', streep:'#d9b56a', berm:'rgba(170,120,60,.3)',  stoep:'#d63a2c', decor:[['cactus',.55],['rots',.45]] },
+  sneeuw:   { grond:'#eaf2f9', streep:'#dfe9f3', berm:'rgba(150,175,200,.35)', stoep:'#2f7fc4', decor:[['den',.75],['sneeuwman',.12],['rots',.13]] },
+  strand:   { grond:'#f1dea6', streep:'#ead59a', berm:'rgba(200,170,110,.3)', stoep:'#f39c12', decor:[['palm',.6],['parasol',.25],['rots',.15]] },
+  herfst:   { grond:'#6c8a38', streep:'#75933f', berm:'rgba(140,90,40,.3)',   stoep:'#d63a2c', decor:[['herfstboom',.75],['boom',.1],['paddenstoel',.15]] },
+  vulkaan:  { grond:'#4b3a34', streep:'#54423b', berm:'rgba(20,10,8,.35)',    stoep:'#f39c12', decor:[['rots',.65],['lava',.35]] },
+};
+const CIRCUITS = [
+  { id:'kamp', naam:'⛺ Kampterrein', thema:'kamp', punten:[[300,800],[300,420],[480,230],[900,200],[1200,350],[1500,250],[1900,250],[2150,450],[2150,800],
+      [1900,1000],[1550,950],[1300,1100],[1350,1350],[1100,1500],[700,1450],[450,1250]] },
+  { id:'woestijn', naam:'🌵 Cactusvallei', thema:'woestijn', punten:[[400,900],[400,500],[700,300],[1300,300],[1500,450],[1700,300],[2200,300],[2400,600],
+      [2300,1000],[1900,1150],[1500,1050],[1100,1200],[700,1200]] },
+  { id:'sneeuw', naam:'❄️ IJsberg', thema:'sneeuw', punten:[[300,1400],[300,400],[500,250],[700,400],[700,1100],[900,1250],[1100,1100],[1100,400],[1300,250],
+      [1500,400],[1500,1100],[1700,1250],[1900,1100],[1900,400],[2100,250],[2300,400],[2300,1500],[2000,1700],[600,1700]] },
+  { id:'strand', naam:'🏖️ Zonnestrand', thema:'strand', zee:1800, punten:[[300,700],[600,400],[1000,450],[1300,300],[1700,350],[2100,250],[2400,500],[2300,900],
+      [2400,1300],[2100,1550],[1700,1400],[1300,1550],[900,1400],[500,1500],[250,1200]] },
+  { id:'herfst', naam:'🍂 Bladerbos', thema:'herfst', punten:[[400,1000],[350,600],[600,350],[1000,450],[1200,800],[1500,900],[1700,600],[1600,300],[2000,200],
+      [2400,450],[2350,900],[2100,1150],[2300,1500],[1900,1700],[1400,1500],[900,1650],[500,1450]] },
+  { id:'vulkaan', naam:'🌋 Vulkaan', thema:'vulkaan', lava:{ x:1350, y:720, r:200 }, punten:[[500,900],[500,500],[800,250],[1300,200],[1800,250],[2200,500],
+      [2300,900],[2100,1300],[1700,1350],[1500,1100],[1250,1100],[1050,1350],[700,1400]] },
+];
+const PER = 30, BREED = 160, RONDES = 3;
+let C, T, pad, N, weg, versiering, grenzen;
+
+function bouwPad(punten) {
+  const p = [];
+  for (let i = 0; i < punten.length; i++) {
+    const p0 = punten[(i - 1 + punten.length) % punten.length], p1 = punten[i], p2 = punten[(i + 1) % punten.length], p3 = punten[(i + 2) % punten.length];
+    for (let s = 0; s < PER; s++) {
+      const t = s / PER, t2 = t * t, t3 = t2 * t;
+      const f = (a, b, c, d) => 0.5 * (2*b + (-a + c)*t + (2*a - 5*b + 4*c - d)*t2 + (-a + 3*b - 3*c + d)*t3);
+      p.push({ x: f(p0[0], p1[0], p2[0], p3[0]), y: f(p0[1], p1[1], p2[1], p3[1]) });
+    }
+  }
+  p.forEach((q, i) => {
+    const v = p[(i + 1) % p.length], a = p[(i - 1 + p.length) % p.length];
+    q.hoek = Math.atan2(v.y - a.y, v.x - a.x); q.nx = -Math.sin(q.hoek); q.ny = Math.cos(q.hoek);
+  });
+  return p;
+}
+
+function laadCircuit(c) {
+  C = c; T = THEMAS[c.thema]; pad = bouwPad(c.punten); N = pad.length;
+  weg = new Path2D(); pad.forEach((p, i) => i ? weg.lineTo(p.x, p.y) : weg.moveTo(p.x, p.y)); weg.closePath();
+  const xs = pad.map(p => p.x), ys = pad.map(p => p.y);
+  grenzen = { x0: Math.min(...xs) - 400, y0: Math.min(...ys) - 400, x1: Math.max(...xs) + 400, y1: Math.max(...ys) + 400 };
+  let zaad = 7 + c.id.length * 131;
+  const rnd = () => (zaad = (zaad * 16807) % 2147483647) / 2147483647;
+  versiering = [];
+  let pogingen = 0;
+  while (versiering.length < 230 && pogingen++ < 20000) {
+    const x = grenzen.x0 + rnd() * (grenzen.x1 - grenzen.x0), y = grenzen.y0 + rnd() * (grenzen.y1 - grenzen.y0);
+    if (dichtste(x, y).d < BREED / 2 + 70) continue;
+    if (c.zee && y > c.zee - 40) continue;
+    if (c.lava && Math.hypot(x - c.lava.x, y - c.lava.y) < c.lava.r + 40) continue;
+    let r = rnd(), soort = T.decor[0][0];
+    for (const [s, kans] of T.decor) { if (r < kans) { soort = s; break; } r -= kans; }
+    versiering.push({ x, y, soort, r: 20 + rnd() * 20, k: rnd() });
+  }
+}
+
+function dichtste(x, y, rond) {   // index van het dichtste punt op de weg (zoekt rond een vorige index)
+  let beste = 0, bd = Infinity;
+  const van = rond === undefined ? 0 : rond - 30, tot = rond === undefined ? N : rond + 30;
+  for (let k = van; k < tot; k++) {
+    const i = (k + N) % N, d = (pad[i].x - x) ** 2 + (pad[i].y - y) ** 2;
+    if (d < bd) { bd = d; beste = i; }
+  }
+  return { i: beste, d: Math.sqrt(bd) };
+}
+const hoekVerschil = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+/* ---------- Auto's ---------- */
+const KLEUREN = ['#e74c3c', '#3498db', '#f1c40f', '#9b59b6', '#ff7ab6', '#1abc9c'];
+let mijnKleur = localStorage.getItem('raceKleur') || KLEUREN[0];
+let autos = [], speler, tijd = 0, fase = 'menu', aftel = 0, finishVolgorde = [], stof = [];
+
+function maakAutos() {
+  const andere = KLEUREN.filter(k => k !== mijnKleur);
+  const namen = ['Marcel', 'Turbo', 'Flits', 'Raket'];
+  autos = [0, 1, 2, 3].map(n => {
+    const p = pad[(N - 14 - Math.floor(n / 2) * 16) % N], kant = n % 2 ? 1 : -1;
+    return { x: p.x + p.nx * kant * 38, y: p.y + p.ny * kant * 38, a: p.hoek, v: 0, idx: 0, ronde: 0, half: false,
+             klaar: false, eindtijd: 0, ai: n > 0, naam: namen[n], kleur: n ? andere[n - 1] : mijnKleur,
+             max: [0, 475, 505, 530][n], kant: kant * 30, fase: n * 1.7 };
+  });
+  autos.forEach(a => { a.idx = dichtste(a.x, a.y).i; });
+  speler = autos[0];
+}
+
+const toets = { links:false, rechts:false, gas:false, rem:false };
+const TOETSEN = { ArrowLeft:'links', KeyA:'links', ArrowRight:'rechts', KeyD:'rechts', ArrowUp:'gas', KeyW:'gas', ArrowDown:'rem', KeyS:'rem' };
+addEventListener('keydown', e => { if (TOETSEN[e.code]) { toets[TOETSEN[e.code]] = true; e.preventDefault(); } });
+addEventListener('keyup',   e => { if (TOETSEN[e.code]) { toets[TOETSEN[e.code]] = false; e.preventDefault(); } });
+document.querySelectorAll('.knop').forEach(k => {
+  const zet = aan => { toets[k.dataset.k] = aan; k.classList.toggle('aan', aan); };
+  k.addEventListener('pointerdown', e => { e.preventDefault(); k.setPointerCapture(e.pointerId); zet(true); });
+  for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) k.addEventListener(t, () => zet(false));
+});
+
+function vooruitgang(a) { return a.ronde * N + a.idx - (a.idx > N / 2 && !a.half ? N : 0); }
+
+function rijd(a, dt) {
+  const { i, d } = dichtste(a.x, a.y, a.idx);
+  a.idx = i;
+  const opWeg = d <= BREED / 2;
+  let gas = false, rem = false, stuur = 0;
+  if (a.klaar && !a.ai) rem = true;   // na de finish rustig uitrollen
+  else if (a.ai) {
+    const off = a.kant * 0.6 + Math.sin(tijd * 0.4 + a.fase) * 15;
+    const doel = pad[(i + 16) % N], tx = doel.x + doel.nx * off, ty = doel.y + doel.ny * off;
+    stuur = Math.max(-1, Math.min(1, hoekVerschil(Math.atan2(ty - a.y, tx - a.x), a.a) * 3));
+    const bocht = Math.max(Math.abs(hoekVerschil(pad[(i + 35) % N].hoek, pad[i].hoek)), Math.abs(hoekVerschil(pad[(i + 20) % N].hoek, pad[i].hoek)));
+    const wil = a.max * (1 - Math.min(0.5, bocht * 0.42));
+    gas = a.v < wil; rem = a.v > wil + 40;
+  } else { gas = toets.gas; rem = toets.rem; stuur = (toets.rechts ? 1 : 0) - (toets.links ? 1 : 0); }
+
+  const max = opWeg ? (a.ai ? a.max : 570) : 230;
+  if (gas) a.v += 400 * dt;
+  else if (rem) a.v -= (a.v > 0 ? 750 : 260) * dt;
+  else a.v -= Math.sign(a.v) * Math.min(Math.abs(a.v), 170 * dt);
+  if (a.v > max) a.v -= Math.min(a.v - max, 650 * dt);
+  a.v = Math.max(-160, a.v);
+  a.a += stuur * 2.8 * dt * Math.min(1, Math.abs(a.v) / 170) * (a.v < 0 ? -1 : 1);
+  a.x += Math.cos(a.a) * a.v * dt; a.y += Math.sin(a.a) * a.v * dt;
+
+  const grens = BREED / 2 + 150, p = pad[i];   // verder dan dit kan je niet van de weg
+  if (d > grens) { a.x = p.x + (a.x - p.x) * grens / d; a.y = p.y + (a.y - p.y) * grens / d; a.v *= 0.5; }
+  if (!opWeg && Math.abs(a.v) > 60 && Math.random() < 0.5)
+    stof.push({ x: a.x - Math.cos(a.a) * 20, y: a.y - Math.sin(a.a) * 20, r: 6, t: 0.6 });
+
+  // rondes tellen
+  if (i > N * 0.4 && i < N * 0.6) a.half = true;
+  if (a.vorige !== undefined && a.vorige > N * 0.9 && i < N * 0.1 && a.half) {
+    a.ronde++; a.half = false;
+    if (a.ronde >= RONDES && !a.klaar) { a.klaar = true; a.eindtijd = tijd; finishVolgorde.push(a); }
+  }
+  a.vorige = i;
+}
+
+function botsen() {
+  for (let p = 0; p < autos.length; p++) for (let q = p + 1; q < autos.length; q++) {
+    const a = autos[p], b = autos[q], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    if (d > 0 && d < 36) {
+      const duw = (36 - d) / 2, ux = dx / d, uy = dy / d;
+      a.x -= ux * duw; a.y -= uy * duw; b.x += ux * duw; b.y += uy * duw;
+      a.v *= 0.97; b.v *= 0.97;
+    }
+  }
+}
+
+/* ---------- Tekenen ---------- */
+function rond(x, y, r, kleur) { ctx.fillStyle = kleur; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); }
+function ster(x, y, r1, r2, punten, kleur) {
+  ctx.fillStyle = kleur; ctx.beginPath();
+  for (let k = 0; k < punten * 2; k++) { const r = k % 2 ? r2 : r1, h = k * Math.PI / punten; ctx.lineTo(x + Math.cos(h) * r, y + Math.sin(h) * r); }
+  ctx.closePath(); ctx.fill();
+}
+const TEKEN = {
+  boom: v => { rond(v.x + 6, v.y + 8, v.r, 'rgba(0,0,0,.2)'); rond(v.x, v.y, v.r, '#1f6b2a'); rond(v.x - v.r * .25, v.y - v.r * .25, v.r * .6, '#2e8a3a'); },
+  herfstboom: v => { const k = ['#d35400','#e67e22','#c0392b','#e8b400'][Math.floor(v.k * 4)];
+    rond(v.x + 6, v.y + 8, v.r, 'rgba(0,0,0,.2)'); rond(v.x, v.y, v.r, k); rond(v.x - v.r * .25, v.y - v.r * .25, v.r * .55, 'rgba(255,255,255,.18)'); },
+  den: v => { rond(v.x + 6, v.y + 8, v.r, 'rgba(0,0,0,.15)'); ster(v.x, v.y, v.r, v.r * .6, 8, '#1e5631'); ster(v.x, v.y, v.r * .6, v.r * .35, 8, '#2d7243');
+    rond(v.x - v.r * .3, v.y - v.r * .2, 4, '#fff'); rond(v.x + v.r * .25, v.y + v.r * .3, 3, '#fff'); },
+  sneeuwman: v => { rond(v.x + 4, v.y + 6, 18, 'rgba(0,0,0,.12)'); rond(v.x, v.y, 18, '#fff'); rond(v.x, v.y - 18, 12, '#fff');
+    rond(v.x - 4, v.y - 20, 2, '#222'); rond(v.x + 4, v.y - 20, 2, '#222'); rond(v.x, v.y - 16, 2.5, '#f39c12'); },
+  cactus: v => { ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.beginPath(); ctx.ellipse(v.x + 8, v.y + 26, 16, 6, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3f8f3a';
+    ctx.beginPath(); ctx.roundRect(v.x - 7, v.y - 28, 14, 56, 7); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(v.x - 22, v.y - 12, 10, 24, 5); ctx.fill(); ctx.fillRect(v.x - 16, v.y + 4, 12, 7);
+    ctx.beginPath(); ctx.roundRect(v.x + 12, v.y - 20, 10, 22, 5); ctx.fill(); ctx.fillRect(v.x + 4, v.y - 4, 12, 7); },
+  rots: v => { const k = C.thema === 'vulkaan' ? ['#2b2321','#3b302c'] : C.thema === 'sneeuw' ? ['#8a96a3','#a6b2be'] : ['#8c7f72','#a69a8c'];
+    ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(v.x + 5, v.y + 6, v.r * .9, v.r * .65, .3, 0, 7); ctx.fill();
+    ctx.fillStyle = k[0]; ctx.beginPath(); ctx.ellipse(v.x, v.y, v.r * .9, v.r * .65, .3, 0, 7); ctx.fill();
+    ctx.fillStyle = k[1]; ctx.beginPath(); ctx.ellipse(v.x - v.r * .2, v.y - v.r * .15, v.r * .5, v.r * .3, .3, 0, 7); ctx.fill();
+    if (C.thema === 'sneeuw') { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(v.x - v.r * .1, v.y - v.r * .3, v.r * .45, v.r * .2, .3, 0, 7); ctx.fill(); } },
+  palm: v => { rond(v.x + 10, v.y + 10, v.r, 'rgba(0,0,0,.15)');
+    for (let k = 0; k < 7; k++) { const h = k * Math.PI * 2 / 7 + v.k;
+      ctx.fillStyle = k % 2 ? '#2f8f3a' : '#3fa548'; ctx.beginPath(); ctx.ellipse(v.x + Math.cos(h) * v.r * .55, v.y + Math.sin(h) * v.r * .55, v.r * .6, v.r * .18, h, 0, 7); ctx.fill(); }
+    rond(v.x, v.y, 6, '#8a5a2b'); },
+  parasol: v => { rond(v.x + 6, v.y + 8, 24, 'rgba(0,0,0,.15)');
+    for (let k = 0; k < 8; k++) { ctx.fillStyle = k % 2 ? '#fff' : ['#e74c3c','#3498db','#9b59b6'][Math.floor(v.k * 3)];
+      ctx.beginPath(); ctx.moveTo(v.x, v.y); ctx.arc(v.x, v.y, 24, k * Math.PI / 4, (k + 1) * Math.PI / 4); ctx.closePath(); ctx.fill(); }
+    rond(v.x, v.y, 3, '#555'); },
+  paddenstoel: v => { rond(v.x + 3, v.y + 4, 14, 'rgba(0,0,0,.2)'); rond(v.x, v.y, 14, '#d62c1f');
+    rond(v.x - 5, v.y - 4, 3, '#fff'); rond(v.x + 5, v.y - 1, 2.5, '#fff'); rond(v.x - 1, v.y + 6, 2.5, '#fff'); },
+  lava: v => { const g = ctx.createRadialGradient(v.x, v.y, 2, v.x, v.y, v.r);
+    g.addColorStop(0, '#ffe066'); g.addColorStop(.5, '#ff7b00'); g.addColorStop(1, 'rgba(180,30,0,.0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(v.x, v.y, v.r, 0, 7); ctx.fill(); },
+  tent: v => { const k = ['#e67e22','#3498db','#e74c3c','#f1c40f'][Math.floor(v.k * 4)];
+    ctx.fillStyle = k; ctx.beginPath(); ctx.moveTo(v.x, v.y - 30); ctx.lineTo(v.x + 30, v.y + 20); ctx.lineTo(v.x - 30, v.y + 20); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.moveTo(v.x, v.y - 30); ctx.lineTo(v.x + 8, v.y + 20); ctx.lineTo(v.x - 8, v.y + 20); ctx.closePath(); ctx.fill(); },
+};
+
+function tekenAuto(a) {
+  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.a);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.roundRect(-22, -11, 48, 28, 8); ctx.fill();   // schaduw
+  ctx.fillStyle = '#222';
+  for (const [x, y] of [[-16,-15],[10,-15],[-16,10],[10,10]]) { ctx.beginPath(); ctx.roundRect(x, y, 11, 5, 2); ctx.fill(); }
+  ctx.fillStyle = a.kleur; ctx.beginPath(); ctx.roundRect(-24, -13, 48, 26, 9); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(-20, -2, 40, 4);            // streep
+  ctx.fillStyle = '#1d2b3a'; ctx.beginPath(); ctx.roundRect(2, -10, 11, 20, 4); ctx.fill();   // voorruit
+  ctx.beginPath(); ctx.roundRect(-17, -9, 7, 18, 3); ctx.fill();                      // achterruit
+  ctx.fillStyle = '#fff6b0'; ctx.fillRect(21, -11, 3, 5); ctx.fillRect(21, 6, 3, 5); // lampen
+  ctx.restore();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center';
+  ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)';
+  const label = a.ai ? a.naam : '▼ JIJ';
+  ctx.strokeText(label, a.x, a.y - 26); ctx.fillText(label, a.x, a.y - 26);
+}
+
+function tekenOndergrond(c, t, g) {   // grond, zee/lava en weg (ook gebruikt voor de kleine voorbeeldjes)
+  ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 2000, g.y0 - 2000, g.x1 - g.x0 + 4000, g.y1 - g.y0 + 4000);
+  ctx.fillStyle = t.streep;
+  for (let x = g.x0 - 2000; x < g.x1 + 2000; x += 160) ctx.fillRect(x, g.y0 - 2000, 80, g.y1 - g.y0 + 4000);
+  if (c.zee) {
+    ctx.fillStyle = '#e8d08e'; ctx.fillRect(g.x0 - 2000, c.zee - 60, g.x1 - g.x0 + 4000, 60);
+    ctx.fillStyle = '#2f9fd8'; ctx.fillRect(g.x0 - 2000, c.zee, g.x1 - g.x0 + 4000, 3000);
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 6;
+    for (let r = 0; r < 4; r++) { ctx.beginPath();
+      for (let x = g.x0 - 600; x < g.x1 + 600; x += 40) ctx.lineTo(x, c.zee + 30 + r * 70 + Math.sin(x / 60 + r) * 8);
+      ctx.stroke(); }
+  }
+  if (c.lava) {
+    const l = c.lava, gr = ctx.createRadialGradient(l.x, l.y, 10, l.x, l.y, l.r);
+    gr.addColorStop(0, '#ffe066'); gr.addColorStop(.45, '#ff7b00'); gr.addColorStop(.9, '#c0260a'); gr.addColorStop(1, '#3a1a12');
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(l.x, l.y, l.r, 0, 7); ctx.fill();
+  }
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = t.berm; ctx.lineWidth = BREED + 300; ctx.stroke(c._weg);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = BREED + 22; ctx.stroke(c._weg);
+  ctx.strokeStyle = t.stoep; ctx.setLineDash([28, 28]); ctx.stroke(c._weg); ctx.setLineDash([]);
+  ctx.strokeStyle = '#5a5f66'; ctx.lineWidth = BREED; ctx.stroke(c._weg);
+}
+
+function tekenWereld(zoom) {
+  const cx = speler.x + Math.cos(speler.a) * speler.v * 0.25, cy = speler.y + Math.sin(speler.a) * speler.v * 0.25;
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * (W / 2 - cx * zoom), dpr * (H / 2 - cy * zoom));
+  tekenOndergrond(C, T, grenzen);
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 4; ctx.setLineDash([40, 40]); ctx.stroke(weg); ctx.setLineDash([]);
+
+  const s = pad[0];   // start- en finishlijn
+  ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.hoek);
+  for (let r = 0; r < 2; r++) for (let k = 0; k < 16; k++) {
+    ctx.fillStyle = (r + k) % 2 ? '#111' : '#fff';
+    ctx.fillRect(-10 + r * 10, -BREED / 2 + k * BREED / 16, 10, BREED / 16);
+  }
+  ctx.restore();
+
+  for (const s of stof) { ctx.fillStyle = C.thema === 'sneeuw' ? `rgba(255,255,255,${s.t})` : `rgba(150,120,70,${s.t})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill(); }
+  autos.forEach(tekenAuto);
+  for (const v of versiering) TEKEN[v.soort](v);
+}
+
+function tekenKaartje() {
+  const bw = grenzen.x1 - grenzen.x0, bh = grenzen.y1 - grenzen.y0, k = Math.min(150, W * 0.28) / bw;
+  const ox = W - bw * k - 12, oy = 12;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.roundRect(ox - 6, oy - 6, bw * k + 12, bh * k + 12, 10); ctx.fill();
+  ctx.save(); ctx.translate(ox - grenzen.x0 * k, oy - grenzen.y0 * k); ctx.scale(k, k);
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 60; ctx.stroke(weg);
+  for (const a of autos) { ctx.fillStyle = a.kleur; ctx.beginPath(); ctx.arc(a.x, a.y, a.ai ? 55 : 80, 0, 7); ctx.fill(); }
+  ctx.restore();
+}
+
+const tijdTekst = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+function plaatsen() {
+  const rest = autos.filter(a => !a.klaar).sort((a, b) => vooruitgang(b) - vooruitgang(a));
+  return [...finishVolgorde, ...rest];
+}
+
+/* ---------- Spelverloop ---------- */
+let vorigeTijd = performance.now();
+function lus(nu) {
+  const dt = Math.min(0.033, (nu - vorigeTijd) / 1000); vorigeTijd = nu;
+  if (fase === 'aftellen') {
+    aftel -= dt;
+    const el = document.getElementById('aftellen');
+    el.hidden = false; el.textContent = aftel > 0 ? Math.ceil(aftel) : 'GO!';
+    if (aftel <= 0) fase = 'race';
+  }
+  if (fase === 'race' || fase === 'klaar') {
+    if (aftel > -1) { aftel -= dt; if (aftel <= -1) document.getElementById('aftellen').hidden = true; }
+    tijd += dt;
+    autos.forEach(a => rijd(a, dt));
+    botsen();
+    if (fase === 'race' && speler.klaar) { fase = 'klaar'; setTimeout(toonEinde, 1800); }
+  }
+  stof.forEach(s => { s.t -= dt; s.r += dt * 14; }); stof = stof.filter(s => s.t > 0);
+
+  const zoom = Math.max(0.5, Math.min(1, Math.min(W, H) / 650));
+  tekenWereld(zoom);
+  tekenKaartje();
+  if (fase !== 'menu') {
+    const plaats = plaatsen().indexOf(speler) + 1;
+    document.getElementById('hud').innerHTML =
+      `${C.naam}<br>Ronde ${Math.min(speler.ronde + 1, RONDES)}/${RONDES}<br>Plaats ${plaats}/${autos.length}<br>⏱ ${tijdTekst(fase === 'aftellen' ? 0 : (speler.klaar ? speler.eindtijd : tijd))}`;
+  }
+  requestAnimationFrame(lus);
+}
+
+const recordSleutel = () => 'raceBest_' + C.id;
+function toonEinde() {
+  const lijst = plaatsen(), plaats = lijst.indexOf(speler) + 1;
+  document.getElementById('eindTitel').textContent = plaats === 1 ? '🏆 Je hebt gewonnen!' : `Je werd ${plaats}e!`;
+  const best = +localStorage.getItem(recordSleutel()) || Infinity, nieuw = speler.eindtijd < best;
+  if (nieuw) localStorage.setItem(recordSleutel(), speler.eindtijd);
+  document.getElementById('uitslag').innerHTML = `<b>${C.naam}</b><br>` + lijst.map((a, i) =>
+    `${['🥇','🥈','🥉','4.'][i]} <b style="color:${a.kleur}">${a.ai ? a.naam : 'Jij'}</b>${a.klaar ? ' ' + tijdTekst(a.eindtijd) : ''}`).join('<br>') +
+    `<br><br>${nieuw ? '⭐ Nieuw record op dit circuit!' : 'Record: ' + tijdTekst(best)}`;
+  document.getElementById('einde').hidden = false;
+  document.querySelectorAll('.knoppen').forEach(k => k.hidden = true);
+}
+
+function start() {
+  document.getElementById('menu').hidden = true;
+  document.getElementById('einde').hidden = true;
+  document.getElementById('hud').hidden = false;
+  document.querySelectorAll('.knoppen').forEach(k => k.hidden = false);
+  maakAutos(); tijd = 0; aftel = 3; finishVolgorde = []; stof = []; fase = 'aftellen';
+}
+
+function toonMenu() {
+  fase = 'menu';
+  document.getElementById('einde').hidden = true;
+  document.getElementById('hud').hidden = true;
+  document.getElementById('aftellen').hidden = true;
+  document.querySelectorAll('.knoppen').forEach(k => k.hidden = true);
+  vulCircuitKaarten();
+  document.getElementById('menu').hidden = false;
+}
+
+function kiesCircuit(c) {
+  localStorage.setItem('raceCircuit', c.id);
+  laadCircuit(c); maakAutos();
+  document.querySelectorAll('.circuit').forEach(x => x.classList.toggle('gekozen', x.dataset.id === c.id));
+}
+
+function vulCircuitKaarten() {
+  const doos = document.getElementById('circuits');
+  doos.innerHTML = CIRCUITS.map(c => {
+    const best = +localStorage.getItem('raceBest_' + c.id);
+    return `<div class="circuit${c === C ? ' gekozen' : ''}" data-id="${c.id}"><canvas width="300" height="200"></canvas><b>${c.naam}</b><small>${best ? '⭐ ' + tijdTekst(best) : ''}</small></div>`;
+  }).join('');
+  doos.querySelectorAll('.circuit').forEach((el, n) => {   // klein voorbeeld van elk circuit
+    const c = CIRCUITS[n], p = bouwPad(c.punten), xs = p.map(q => q.x), ys = p.map(q => q.y);
+    const g = { x0: Math.min(...xs) - 200, y0: Math.min(...ys) - 200, x1: Math.max(...xs) + 200, y1: Math.max(...ys) + 200 };
+    const vc = el.querySelector('canvas'), k = Math.min(300 / (g.x1 - g.x0), 200 / (g.y1 - g.y0));
+    const oud = ctx;
+    ctx = vc.getContext('2d');
+    ctx.setTransform(k, 0, 0, k, (300 - (g.x1 - g.x0) * k) / 2 - g.x0 * k, (200 - (g.y1 - g.y0) * k) / 2 - g.y0 * k);
+    tekenOndergrond(c, THEMAS[c.thema], g);
+    ctx = oud;
+    el.onclick = () => kiesCircuit(c);
+  });
+}
+
+CIRCUITS.forEach(c => { const p = bouwPad(c.punten); c._weg = new Path2D(); p.forEach((q, i) => i ? c._weg.lineTo(q.x, q.y) : c._weg.moveTo(q.x, q.y)); c._weg.closePath(); });
+
+document.getElementById('kleuren').innerHTML = KLEUREN.map(k => `<div class="kleur${k === mijnKleur ? ' gekozen' : ''}" data-kleur="${k}" style="background:${k}"></div>`).join('');
+document.getElementById('kleuren').addEventListener('click', e => {
+  const k = e.target.dataset.kleur; if (!k) return;
+  mijnKleur = k; localStorage.setItem('raceKleur', k);
+  document.querySelectorAll('.kleur').forEach(x => x.classList.toggle('gekozen', x.dataset.kleur === k));
+  maakAutos();
+});
+document.getElementById('start').onclick = start;
+document.getElementById('opnieuw').onclick = start;
+document.getElementById('naarMenu').onclick = toonMenu;
+
+laadCircuit(CIRCUITS.find(c => c.id === localStorage.getItem('raceCircuit')) || CIRCUITS[0]);
+maakAutos();
+vulCircuitKaarten();
+
+// Adres #start=vulkaan start meteen op dat circuit (handig om te testen)
+const hash = new URLSearchParams(location.hash.slice(1));
+if (hash.get('start')) { const c = CIRCUITS.find(c => c.id === hash.get('start')); if (c) kiesCircuit(c); start(); }
+if (hash.has('zelftest')) {   // elk circuit: ligt de weg nergens te dicht bij zichzelf, en rijden alle auto's 3 rondes uit?
+  const uit = [];
+  for (const c of CIRCUITS) {
+    laadCircuit(c);
+    let minAfstand = Infinity;
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      if (Math.min(j - i, N - (j - i)) < 45) continue;
+      minAfstand = Math.min(minAfstand, Math.hypot(pad[i].x - pad[j].x, pad[i].y - pad[j].y));
+    }
+    let lavaAfstand = c.lava ? Math.min(...pad.map(p => Math.hypot(p.x - c.lava.x, p.y - c.lava.y))) - c.lava.r - BREED / 2 : 999;
+    let zeeAfstand = c.zee ? c.zee - Math.max(...pad.map(p => p.y)) - BREED / 2 : 999;
+    start(); speler.ai = true; speler.max = 520; fase = 'race'; aftel = -2;
+    let gras = 0, stappen = 0;
+    while (finishVolgorde.length < 4 && tijd < 600) {
+      tijd += 1 / 60; autos.forEach(a => rijd(a, 1 / 60)); botsen(); stappen++;
+      autos.forEach(a => { if (dichtste(a.x, a.y, a.idx).d > BREED / 2) gras++; });
+    }
+    uit.push(`${c.id}: afstand ${minAfstand.toFixed(0)} lava ${lavaAfstand.toFixed(0)} zee ${zeeAfstand.toFixed(0)} gras ${(100 * gras / (stappen * 4)).toFixed(1)}% klaar ${finishVolgorde.length}/4 tijd ${tijd.toFixed(0)}s`);
+  }
+  document.title = 'ZELFTEST ' + uit.join(' || ');
+  toonMenu();
+}
+requestAnimationFrame(lus);
+</script>
+</body>
+</html>

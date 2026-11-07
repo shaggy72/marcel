@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Marcels Kampbouwer</title>
+<style>
+  :root { --groen:#2f6b3a; --licht:#e9f3dc; --bruin:#8a5a2b; --oranje:#e8892b; --tekst:#23311f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background: var(--licht); color: var(--tekst); padding-bottom: 90px; }
+  header { background: var(--groen); color:#fff; padding: 14px 16px; font-size: 22px; font-weight: 700; }
+  main { padding: 14px; max-width: 800px; margin: 0 auto; }
+  .tab { display:none; } .tab.aan { display:block; }
+  h2 { margin: 6px 0 10px; }
+  input, select, button { font: inherit; font-size: 16px; }
+  button { border:0; border-radius: 12px; padding: 10px 14px; background: var(--oranje); color:#fff; font-weight:700; }
+  button.grijs { background:#7b8a74; }
+  button.rood { background:#c0392b; }
+  .dock { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(12px + env(safe-area-inset-bottom));
+          display:flex; gap:6px; background:#fff; padding:6px; border-radius: 22px; box-shadow: 0 4px 16px #0004; }
+  .dock button { background: transparent; color: var(--tekst); padding: 10px 16px; }
+  .dock button.actief { background: var(--groen); color:#fff; }
+
+  /* knopen */
+  .knopen { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:10px; }
+  .kaart { background:#fff; border-radius:14px; padding:12px; box-shadow: 0 2px 6px #0002; cursor:pointer; text-align:left; color:var(--tekst); }
+  .kaart b { display:block; font-size:17px; } .kaart small { color:#5b6b55; }
+  .stap { background:#fff; border-radius:12px; padding:10px 12px; margin:8px 0; display:flex; gap:10px; align-items:center; }
+  .stap.klaar { background:#d7efc7; text-decoration: line-through; }
+  .nr { background:var(--bruin); color:#fff; border-radius:50%; min-width:30px; height:30px; display:grid; place-items:center; font-weight:700; }
+  .tip { background:#fff3cf; border-radius:12px; padding:10px 12px; margin:8px 0; }
+  canvas.anim { width:100%; display:block; background:#fff; border-radius:12px; box-shadow:0 2px 6px #0002; margin-bottom:8px; }
+  button:disabled { opacity:.4; }
+  svg.touw { width:100%; max-height:160px; background:#fff; border-radius:12px; }
+
+  /* quiz */
+  .quiz .opt { display:block; width:100%; margin:8px 0; background:#fff; color:var(--tekst); text-align:left; box-shadow:0 2px 6px #0002; }
+  .quiz .opt.goed { background:#7ccf6a; } .quiz .opt.fout { background:#f1a29a; }
+
+  /* ontwerper */
+  .bar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .bar button { background:#fff; color:var(--tekst); box-shadow:0 2px 6px #0002; padding:8px 10px; }
+  #veld { position:relative; height: 55vh; min-height: 320px; border-radius:14px; touch-action:none; overflow:hidden;
+          background: repeating-linear-gradient(45deg,#9bd07a,#9bd07a 20px,#92c872 20px,#92c872 40px); border:3px solid var(--groen); }
+  .ding { position:absolute; transform: translate(-50%,-50%); font-size:42px; user-select:none; -webkit-user-select:none; touch-action:none; cursor:grab; text-align:center; line-height:1; }
+  .ding span { display:block; font-size:11px; font-weight:700; background:#fffc; border-radius:6px; padding:1px 4px; margin-top:2px; }
+  .ding.gekozen { outline: 3px dashed var(--oranje); border-radius:10px; }
+  .totaal { background:#fff; border-radius:14px; padding:12px; margin-top:10px; box-shadow:0 2px 6px #0002; }
+  .totaal li { margin:4px 0; }
+  #plannaam { width:100%; padding:10px; border-radius:10px; border:2px solid var(--groen); margin-bottom:8px; }
+</style>
+</head>
+<body>
+<header><a href="index.html" style="color:#fff;text-decoration:none;margin-right:10px" aria-label="Naar het begin">🏠</a>🏕️ Marcels Kampbouwer</header>
+<main>
+
+  <!-- KNOPEN -->
+  <section class="tab aan" id="tab-knopen">
+    <div id="knoopLijst">
+      <h2>Knopen</h2>
+      <div class="knopen" id="knopen"></div>
+      <h2 style="margin-top:20px">Quiz</h2>
+      <div class="quiz" id="quiz"></div>
+    </div>
+    <div id="knoopDetail" hidden></div>
+  </section>
+
+  <!-- ONTWERPER -->
+  <section class="tab" id="tab-ontwerp">
+    <h2>Kamp-ontwerper</h2>
+    <input id="plannaam" placeholder="Naam van mijn kamp" autocomplete="off">
+    <div class="bar" id="bar"></div>
+    <div id="veld"></div>
+    <div class="bar" style="margin-top:8px">
+      <button class="rood" id="weg">Haal gekozen ding weg</button>
+      <button class="grijs" id="leeg">Alles wissen</button>
+    </div>
+    <div class="totaal">
+      <b>Wat heb ik nodig?</b>
+      <ul id="lijst"></ul>
+    </div>
+  </section>
+</main>
+
+<nav class="dock">
+  <button class="actief" data-tab="knopen">🪢 Knopen</button>
+  <button data-tab="ontwerp">⛺ Ontwerper</button>
+</nav>
+
+<script src="animatie.js"></script>
+<script>
+/* ---------- KNOPEN ---------- */
+const KNOPEN = [
+  { id:'plat', naam:'Platte knoop', gebruik:'Twee touwen aan elkaar knopen.', spreuk:'Rechts over links, links over rechts.',
+    stappen:['Neem in elke hand een touweind.','Leg het rechter touw over het linker en draai eromheen.','Leg nu het linker touw over het rechter en draai eromheen.','Trek aan beide kanten strak. De knoop moet er plat uitzien.'] },
+  { id:'mast', naam:'Mastworp', gebruik:'Een touw snel vastmaken aan een paal of stok.', spreuk:'Twee lussen, dezelfde kant op.',
+    stappen:['Maak een lus. Het touw kruist zichzelf niet.','Maak een tweede lus, dezelfde kant op.','Leg lus twee voor lus één.','Schuif ze samen over de paal en trek strak.'] },
+  { id:'schoot', naam:'Schootsteek', gebruik:'Twee touwen van verschillende dikte verbinden.', spreuk:'Het konijn gaat rond de haak.',
+    stappen:['Maak met het dikke touw een lus (een haak).','Steek het dunne touw van onderen door de lus.','Ga om de achterkant van de lus heen.','Steek het dunne touw onder zichzelf door en trek strak.'] },
+  { id:'paal', naam:'Paalsteek', gebruik:'Een lus die niet dicht kan trekken, bijvoorbeeld om een boom of om iemand te redden.', spreuk:'Het konijn komt uit de put, gaat rond de boom en springt terug de put in.',
+    stappen:['Maak een klein oogje in het touw. Dat is de put.','Het touweind is het konijn. Het komt van onderen uit de put.','Het konijn gaat rond de boom (het lange touw).','Het konijn springt terug in de put. Trek strak.'] },
+  { id:'span', naam:'Spanknoop', gebruik:'Een tarp of touw heel strak spannen.', spreuk:'Een lus die als een katrol werkt.',
+    stappen:['Maak midden in het touw een lus met een halve steek.','Leg het touweind om de boom of haring.','Steek het eind door de lus.','Trek er hard aan. Nu staat het touw strak.','Maak vast met twee halve steken.'] },
+  { id:'kruis', naam:'Kruisbindsel', gebruik:'Twee stokken haaks vastbinden, voor poorten en tafels.', spreuk:'Eerst wikkelen, dan spannen.',
+    stappen:['Begin met een mastworp om één stok.','Wikkel het touw 3 keer kruislings om beide stokken.','Wikkel 2 keer tussen de stokken door om te spannen.','Eindig met een mastworp.'] },
+];
+const QUIZ = [
+  ['Je wilt een tarp heel strak spannen.','span'],
+  ['Je wilt twee gelijke touwen verbinden.','plat'],
+  ['Je wilt een touw snel aan een paal vastmaken.','mast'],
+  ['Je wilt een lus die niet dichttrekt.','paal'],
+  ['Je wilt twee stokken haaks vastbinden voor een poort.','kruis'],
+  ['Je wilt een dun en een dik touw verbinden.','schoot'],
+];
+
+const $ = s => document.querySelector(s);
+const naamVan = id => KNOPEN.find(k => k.id === id).naam;
+
+$('#knopen').innerHTML = KNOPEN.map(k => `<button class="kaart" data-k="${k.id}"><b>${k.naam}</b><small>${k.gebruik}</small></button>`).join('');
+$('#knopen').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) toonKnoop(b.dataset.k); });
+
+function touwTekening(id) {
+  // een simpel touw dat een lus maakt, per knoop een andere kleur
+  const kleur = {plat:'#c0392b',mast:'#8a5a2b',schoot:'#2c7fb8',paal:'#7b3fa0',span:'#e8892b',kruis:'#2f6b3a'}[id];
+  return `<svg class="touw" viewBox="0 0 300 120"><path d="M10 90 C 70 10, 120 10, 150 60 S 230 110, 290 30" fill="none" stroke="${kleur}" stroke-width="8" stroke-linecap="round"/>
+  <path d="M10 30 C 70 110, 120 110, 150 60 S 230 10, 290 90" fill="none" stroke="${kleur}" stroke-width="8" stroke-linecap="round" opacity=".6"/></svg>`;
+}
+
+const ANIM = window.KNOOP_ANIM;
+// Zet de stappen van geanimeerde knopen gelijk aan de tekst in de animatie
+KNOPEN.forEach(k => { if (ANIM[k.id]) k.stappen = ANIM[k.id].stappen.map(s => s.t); });
+
+let traag = false;
+function startAnimatie(K, d, beginStap) {
+  const canvas = d.querySelector('#anim'), laatste = K.stappen.length - 1, staat = knoopToestanden(K);
+  let n = 0, token = 0;
+  const zacht = t => .5 - Math.cos(Math.PI * t) / 2;
+  const toon = (i, animeer = true) => new Promise(klaar => {
+    n = Math.max(0, Math.min(laatste, i));
+    d.querySelector('#onder').innerHTML = '<b>Stap ' + (n+1) + ' van ' + (laatste+1) + ':</b> ' + K.stappen[n].t;
+    d.querySelector('#vorig').disabled = n === 0;
+    d.querySelector('#volgend').disabled = n === laatste;
+    const van = staat[n], naar = staat[n + 1], pijlen = K.stappen[n].pijlen, mijn = ++token;
+    const du = Math.max(...naar.map((t, r) => Math.abs(t.u - van[r].u))), dm = Math.max(...naar.map((t, r) => Math.abs(t.m - van[r].m)));
+    const duur = (300 + du * 450 + dm * 1800) * (traag ? 2.2 : 1);
+    if (!animeer) { tekenKnoop(canvas, K, naar, { pijlen }); return klaar(0); }
+    const start = performance.now();
+    const frame = nu => {
+      if (mijn !== token) return klaar(-1);
+      const p = Math.min(1, (nu - start) / duur), e = zacht(p);
+      const tus = naar.map((t, r) => ({ u: van[r].u + (t.u - van[r].u) * e, m: van[r].m + (t.m - van[r].m) * e }));
+      tekenKnoop(canvas, K, tus, { beweegt: naar.map((t, r) => p < 1 && t.u !== van[r].u), pijlen, pijlAlfa: e });
+      if (p < 1) requestAnimationFrame(frame); else klaar(1);
+    };
+    requestAnimationFrame(frame);
+  });
+  let reeks = 0;   // telt op bij elke knop, zodat "speel alles" stopt als je zelf iets kiest
+  const speelAlles = async () => {
+    const mijn = ++reeks;
+    for (let i = 0; i <= laatste; i++) {
+      if (mijn !== reeks || await toon(i) < 0) return;
+      await new Promise(z => setTimeout(z, 1300));
+    }
+  };
+  d.querySelector('#vorig').onclick = () => { reeks++; toon(n - 1); };
+  d.querySelector('#volgend').onclick = () => { reeks++; toon(n + 1); };
+  d.querySelector('#nogeens').onclick = () => { reeks++; toon(n); };
+  d.querySelector('#alles').onclick = speelAlles;
+  d.querySelector('#traag').onclick = e => { traag = !traag; e.target.textContent = '🐢 Langzaam: ' + (traag ? 'aan' : 'uit'); };
+  const herteken = () => tekenKnoop(canvas, K, staat[n + 1], { pijlen: K.stappen[n].pijlen });
+  window.addEventListener('resize', herteken);
+  if (beginStap !== undefined) toon(beginStap - 1, false); else speelAlles();
+  return () => { token++; reeks++; window.removeEventListener('resize', herteken); };
+}
+
+function toonKnoop(id, beginStap) {
+  const k = KNOPEN.find(x => x.id === id);
+  $('#knoopLijst').hidden = true;
+  const d = $('#knoopDetail'); d.hidden = false;
+  const A = ANIM[id];
+  d.innerHTML = `<button class="grijs" id="terug">← Terug</button><h2>${k.naam}</h2>
+    ${A ? `<canvas id="anim" class="anim"></canvas>
+      <div class="tip" id="onder"></div>
+      <div class="bar"><button id="vorig">◀ Vorige</button><button id="nogeens">↻ Nog eens</button><button id="volgend">Volgende ▶</button></div>
+      <div class="bar"><button id="alles">▶ Speel alles af</button><button id="traag" class="grijs">🐢 Langzaam: uit</button></div>
+      ${A.tip ? `<div class="tip">${A.tip}</div>` : ''}`
+    : `${touwTekening(id)}<div class="tip">🎬 De animatie van deze knoop is er nog niet. Volg intussen de stappen hieronder.</div>`}
+    <div class="tip"><b>Waarvoor?</b> ${k.gebruik}<br><b>Onthoud:</b> ${k.spreuk}</div>
+    <h3>Oefen stap voor stap (tik als je een stap gedaan hebt)</h3>
+    ${k.stappen.map((s,i)=>`<div class="stap" data-s><div class="nr">${i+1}</div><div>${s}</div></div>`).join('')}
+    <div id="gelukt"></div>`;
+  let stopAnim = () => {};
+  $('#terug').onclick = () => { stopAnim(); d.hidden = true; $('#knoopLijst').hidden = false; };
+  if (A) stopAnim = startAnimatie(A, d, beginStap);
+  d.querySelectorAll('[data-s]').forEach(el => el.onclick = () => {
+    el.classList.toggle('klaar');
+    const alles = d.querySelectorAll('[data-s]').length === d.querySelectorAll('.klaar').length;
+    $('#gelukt').innerHTML = alles ? '<div class="tip">🎉 Top! Probeer hem nu nog eens zonder te kijken.</div>' : '';
+  });
+}
+
+let score = 0, totaalVragen = 0;
+function nieuweVraag() {
+  const [vraag, juist] = QUIZ[Math.floor(Math.random()*QUIZ.length)];
+  const fout = KNOPEN.filter(k=>k.id!==juist).sort(()=>Math.random()-.5).slice(0,2).map(k=>k.id);
+  const opties = [juist,...fout].sort(()=>Math.random()-.5);
+  $('#quiz').innerHTML = `<div class="tip"><b>${vraag}</b><br>Welke knoop? (Score: ${score}/${totaalVragen})</div>` +
+    opties.map(o=>`<button class="opt" data-o="${o}">${naamVan(o)}</button>`).join('');
+  $('#quiz').querySelectorAll('.opt').forEach(b => b.onclick = () => {
+    totaalVragen++;
+    const goed = b.dataset.o === juist; if (goed) score++;
+    b.classList.add(goed?'goed':'fout');
+    $('#quiz').querySelectorAll('.opt').forEach(x => { x.disabled = true; if (x.dataset.o===juist) x.classList.add('goed'); });
+    $('#quiz').insertAdjacentHTML('beforeend','<button id="volg">Volgende vraag →</button>');
+    $('#volg').onclick = nieuweVraag;
+  });
+}
+nieuweVraag();
+
+/* ---------- ONTWERPER ---------- */
+const DINGEN = {
+  tent:   {emoji:'⛺', naam:'Tent',        stokken:4, touw:6,  tarp:1, stenen:0},
+  poort:  {emoji:'🚪', naam:'Poort',       stokken:3, touw:8,  tarp:0, stenen:0},
+  tafel:  {emoji:'🪑', naam:'Tafel',       stokken:6, touw:12, tarp:0, stenen:0},
+  bank:   {emoji:'🛋️', naam:'Zitbank',     stokken:5, touw:8,  tarp:0, stenen:0},
+  keuken: {emoji:'🍳', naam:'Keukenrek',   stokken:4, touw:6,  tarp:0, stenen:0},
+  vuur:   {emoji:'🔥', naam:'Vuurplaats',  stokken:0, touw:0,  tarp:0, stenen:8},
+  vlag:   {emoji:'🚩', naam:'Vlaggenmast', stokken:1, touw:2,  tarp:0, stenen:0},
+  boom:   {emoji:'🌲', naam:'Boom',        stokken:0, touw:0,  tarp:0, stenen:0},
+};
+const EENHEID = {stokken:'stokken', touw:'meter touw', tarp:'tarp', stenen:'stenen'};
+let plan = JSON.parse(localStorage.getItem('marcelPlan') || '{"naam":"","items":[]}');
+let gekozen = null;
+const save = () => localStorage.setItem('marcelPlan', JSON.stringify(plan));
+
+$('#bar').innerHTML = Object.entries(DINGEN).map(([k,d])=>`<button data-add="${k}">${d.emoji} ${d.naam}</button>`).join('');
+$('#bar').addEventListener('click', e => {
+  const b = e.target.closest('[data-add]'); if (!b) return;
+  const v = $('#veld').getBoundingClientRect();
+  const it = {id: Date.now()+Math.random(), type:b.dataset.add, x:v.width/2+(Math.random()*60-30), y:v.height/2+(Math.random()*60-30)};
+  plan.items.push(it); gekozen = it.id; teken();
+});
+$('#plannaam').value = plan.naam;
+$('#plannaam').oninput = e => { plan.naam = e.target.value; save(); };
+$('#weg').onclick = () => { plan.items = plan.items.filter(i=>i.id!==gekozen); gekozen = null; teken(); };
+let wisKlaar = false;
+$('#leeg').onclick = e => {
+  if (!wisKlaar) { wisKlaar = true; e.target.textContent = 'Zeker? Tik nog eens'; setTimeout(()=>{wisKlaar=false; e.target.textContent='Alles wissen';},3000); return; }
+  plan.items = []; gekozen = null; wisKlaar = false; e.target.textContent='Alles wissen'; teken();
+};
+
+function teken() {
+  const veld = $('#veld'); veld.innerHTML = '';
+  plan.items.forEach(it => {
+    const d = DINGEN[it.type];
+    const el = document.createElement('div');
+    el.className = 'ding' + (it.id===gekozen ? ' gekozen' : '');
+    el.style.left = it.x+'px'; el.style.top = it.y+'px';
+    el.innerHTML = `${d.emoji}<span>${d.naam}</span>`;
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault(); gekozen = it.id;
+      veld.querySelectorAll('.gekozen').forEach(x=>x.classList.remove('gekozen')); el.classList.add('gekozen');
+      el.setPointerCapture(e.pointerId);
+      const sx = e.clientX - it.x, sy = e.clientY - it.y;
+      const move = ev => {
+        const v = veld.getBoundingClientRect();
+        it.x = Math.max(0, Math.min(v.width, ev.clientX - sx));
+        it.y = Math.max(0, Math.min(v.height, ev.clientY - sy));
+        el.style.left = it.x+'px'; el.style.top = it.y+'px';
+      };
+      const stop = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', stop); el.removeEventListener('pointercancel', stop); save(); };
+      el.addEventListener('pointermove', move); el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop);
+    });
+    veld.appendChild(el);
+  });
+  const som = {stokken:0,touw:0,tarp:0,stenen:0};
+  plan.items.forEach(i => Object.keys(som).forEach(k => som[k]+=DINGEN[i.type][k]));
+  const regels = Object.entries(som).filter(([,n])=>n>0).map(([k,n])=>`<li><b>${n}</b> ${EENHEID[k]}</li>`);
+  $('#lijst').innerHTML = regels.length ? regels.join('') : '<li>Zet iets in je kamp en ik tel het voor je.</li>';
+  save();
+}
+veld_klik();
+function veld_klik() { $('#veld').addEventListener('pointerdown', e => { if (e.target.id==='veld') { gekozen=null; teken(); } }); }
+teken();
+
+// Adres #knoop=plat&stap=4 opent meteen die knoop bij die stap
+{ const h = new URLSearchParams(location.hash.slice(1)); if (h.get("knoop")) toonKnoop(h.get("knoop"), h.get("stap") ? +h.get("stap") : undefined); }
+
+/* ---------- TABS ---------- */
+document.querySelector('.dock').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  document.querySelectorAll('.dock button').forEach(x=>x.classList.toggle('actief', x===b));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('aan', t.id==='tab-'+b.dataset.tab));
+  if (b.dataset.tab==='ontwerp') teken();
+});
+</script>
+</body>
+</html>
