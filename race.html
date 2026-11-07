@@ -3,16 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Race">
+<meta name="theme-color" content="#2d6a2f">
+<link rel="apple-touch-icon" href="icoon-race.png">
 <title>Marcels Race</title>
 <style>
   html, body { margin:0; height:100%; overflow:hidden; background:#3d8b3d; font-family: system-ui, sans-serif;
-               touch-action:none; user-select:none; -webkit-user-select:none; }
-  canvas#c { display:block; width:100vw; height:100vh; }
+               touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+               -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  canvas#c { display:block; position:fixed; left:0; top:0; }   /* grootte zet maat() in pixels: 100vh klopt niet op iPhone */
   [hidden] { display:none !important; }
-  #hud { position:fixed; top:10px; left:12px; color:#fff; font-weight:800; font-size:20px; line-height:1.35;
-         text-shadow:0 2px 4px #000a; pointer-events:none; }
-  .scherm { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
-            background:#000b; color:#fff; text-align:center; gap:14px; padding:16px; overflow-y:auto; touch-action:pan-y; }
+  #hud { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left));
+         color:#fff; font-weight:800; font-size:20px; line-height:1.35; text-shadow:0 2px 4px #000a; pointer-events:none; }
+  @media (max-height:500px) { #hud { font-size:16px; } }
+  /* menu: bovenaan beginnen en scrollen als het niet past (justify-content:center snijdt de bovenkant af) */
+  .scherm { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+            background:#000b; color:#fff; text-align:center; gap:14px; overflow-y:auto; touch-action:pan-y; -webkit-overflow-scrolling:touch;
+            padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  .scherm > :first-child { margin-top:auto; } .scherm > :last-child { margin-bottom:auto; }
+  @media (max-height:500px) { .scherm h1 { font-size:30px; } .scherm { gap:10px; } }
   .scherm h1 { font-size:40px; margin:0; }
   .scherm p { margin:0; font-size:17px; max-width:460px; }
   .kleuren { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
@@ -30,12 +42,15 @@
   #uitslag { font-size:20px; line-height:1.6; }
   #aftellen { position:fixed; inset:0; display:grid; place-items:center; font-size:130px; font-weight:900; color:#fff;
               text-shadow:0 4px 14px #000; pointer-events:none; }
-  .knoppen { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom)); display:flex; gap:14px; }
-  .knoppen.links { left:16px; } .knoppen.rechts { right:16px; }
-  .knop { width:86px; height:86px; border-radius:50%; background:#fff3; border:3px solid #fff9; color:#fff; font-size:34px;
-          display:grid; place-items:center; touch-action:none; }
-  .knop.aan { background:#fff8; }
-  @media (hover:hover) and (pointer:fine) { .knoppen { display:none; } }
+  /* knoppen enkel op toestellen met een aanraakscherm (body.aanraak, gezet door JavaScript) */
+  .knoppen { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom)); display:none; gap:clamp(8px, 2.5vw, 16px); }
+  body.aanraak .knoppen { display:flex; }
+  .knoppen.links { left:calc(14px + env(safe-area-inset-left)); } .knoppen.rechts { right:calc(14px + env(safe-area-inset-right)); }
+  .knop { width:clamp(62px, 19vw, 96px); height:clamp(62px, 19vw, 96px); border-radius:50%; background:#fff3; border:3px solid #fff9;
+          color:#fff; font-size:clamp(26px, 8vw, 38px); display:grid; place-items:center; touch-action:none; }
+  @media (max-height:500px) { .knop { width:clamp(62px, 19vh, 84px); height:clamp(62px, 19vh, 84px); } }
+  .knop.aan { background:#fff8; transform:scale(.94); }
+  .alleenAanraak { display:none; } body.aanraak .alleenAanraak { display:block; }
 </style>
 </head>
 <body>
@@ -56,6 +71,7 @@
   <a href="index.html" class="klein" style="text-decoration:none;color:#fff;padding:8px 16px;border-radius:12px;background:#fff3">🏠 Terug naar het begin</a>
   <p>Rijd 3 rondes en kom als eerste over de finish. Blijf op de weg: naast de weg ga je trager!<br>
      ⌨️ Pijltjes of W A S D · 📱 Tablet: knoppen onderaan</p>
+  <p class="alleenAanraak">📱 Tip: hou je telefoon dwars, dan zie je meer van het circuit. Linkerduim stuurt, rechterduim geeft gas.</p>
 </div>
 
 <div class="scherm" id="einde" hidden>
@@ -67,11 +83,34 @@
 </div>
 
 <script>
+// Oudere iPhones/iPads (iOS 15 en ouder) kennen roundRect niet: dan zelf tekenen
+if (!CanvasRenderingContext2D.prototype.roundRect) CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+  r = Math.max(0, Math.min(Array.isArray(r) ? r[0] : r || 0, w / 2, h / 2));
+  this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+  this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+};
+// Aanraakscherm? Dan de stuurknoppen tonen (ook op een iPad met toetsenbord). #aanraak forceert dit om te testen.
+if (navigator.maxTouchPoints > 0 || 'ontouchstart' in window || location.hash.includes('aanraak')) document.body.classList.add('aanraak');
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('gesturestart', e => e.preventDefault());   // iOS: niet inzoomen met twee vingers
+
 const cv = document.getElementById('c');
 let ctx = cv.getContext('2d');
-let W, H, dpr;
-function maat() { dpr = devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; }
-addEventListener('resize', maat); maat();
+let W, H, dpr, rand = { boven: 0, rechts: 0 };
+const randMeter = document.createElement('div');   // meet de inkeping/afgeronde hoeken van de iPhone
+randMeter.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right)';
+document.body.appendChild(randMeter);
+function maat() {
+  dpr = Math.min(devicePixelRatio || 1, 2);   // scherper dan 2 maakt het spel enkel trager
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const s = getComputedStyle(randMeter);
+  rand = { boven: parseFloat(s.paddingTop) || 0, rechts: parseFloat(s.paddingRight) || 0 };
+}
+addEventListener('resize', maat);
+addEventListener('orientationchange', () => setTimeout(maat, 300));
+maat();
 
 /* ---------- Circuits en hun sfeer ---------- */
 const THEMAS = {
@@ -332,7 +371,7 @@ function tekenWereld(zoom) {
 
 function tekenKaartje() {
   const bw = grenzen.x1 - grenzen.x0, bh = grenzen.y1 - grenzen.y0, k = Math.min(150, W * 0.28) / bw;
-  const ox = W - bw * k - 12, oy = 12;
+  const ox = W - bw * k - 12 - rand.rechts, oy = 12 + rand.boven;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.roundRect(ox - 6, oy - 6, bw * k + 12, bh * k + 12, 10); ctx.fill();
   ctx.save(); ctx.translate(ox - grenzen.x0 * k, oy - grenzen.y0 * k); ctx.scale(k, k);
@@ -368,7 +407,7 @@ function lus(nu) {
 
   const zoom = Math.max(0.5, Math.min(1, Math.min(W, H) / 650));
   tekenWereld(zoom);
-  tekenKaartje();
+  if (fase !== 'menu') tekenKaartje();
   if (fase !== 'menu') {
     const plaats = plaatsen().indexOf(speler) + 1;
     document.getElementById('hud').innerHTML =

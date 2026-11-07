@@ -4,6 +4,13 @@
    - m: 0 = losse vorm (punten), 1 = strakke vorm (strak). Zo kan je de knoop zien aantrekken.
    - laag(i, x, y): bepaalt wat boven ligt (hoger getal = bovenop). Zo gaat een touw over of onder een ander touw. */
 
+// Oudere iPhones/iPads (iOS 15 en ouder) kennen roundRect niet: dan zelf tekenen
+if (!CanvasRenderingContext2D.prototype.roundRect) CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+  r = Math.max(0, Math.min(Array.isArray(r) ? r[0] : r || 0, w / 2, h / 2));
+  this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+  this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+};
+
 const TOUW = {
   rood:  { kleur:'#d64534', rand:'#7a1f16', glans:'#f7a397' },
   blauw: { kleur:'#2f7fc4', rand:'#163d63', glans:'#9ccdf5' },
