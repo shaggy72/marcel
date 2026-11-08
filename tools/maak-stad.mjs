@@ -15,7 +15,8 @@ const BOCHT = 95;            // straal van de afgeronde hoeken (midden van de we
 const VERDIEP = 3 * S;       // hoogte van een verdieping
 const STAP = 13;             // afstand tussen de punten van de weg
 const START = 700;           // startlijn zoveel eenheden na de hoek Hulstboomstraat/Bevrijdingslaan
-const RAND = 75 * S;         // gebouwen tot zo ver rond het circuit
+const RAND = 75 * S;
+const FOTO_SCHUIF = [9, 12];  // luchtfoto t.o.v. OpenStreetMap, in spel-eenheden (gemeten, zie README)         // gebouwen tot zo ver rond het circuit
 
 const cache = process.argv[2];
 let osm;
@@ -155,6 +156,26 @@ function dichtsteStraat(x, y) {   // richting van het dichtste straatstuk
 }
 
 /* ---------- 4. gebouwen: gevels die te dicht bij de weg staan schuiven naar achter; rijhuizen krijgen een zadeldak ---------- */
+// echte hoogtes uit de 3D GRB van Digitaal Vlaanderen (open data): HN_P99 = top van het gebouw boven de grond (m).
+// Eén GetFeatureInfo per gebouw (de 3D GRB heeft geen WFS); bewaard in <cache>.grb.json zodat het maar één keer moet.
+const grbBestand = cache ? cache.replace(/\.json$/, '') + '.grb.json' : null;
+const grb = grbBestand && fs.existsSync(grbBestand) ? JSON.parse(fs.readFileSync(grbBestand, 'utf8')) : {};
+const teVragen = el.filter(e => e.tags?.building && e.geometry && !(e.id in grb) && e.geometry.some(g => binnenVak(T(M(g)))));
+for (let k = 0; k < teVragen.length; k += 8) {
+  await Promise.all(teVragen.slice(k, k + 8).map(async e => {
+    const la = e.geometry.reduce((s, g) => s + g.lat, 0) / e.geometry.length, lo = e.geometry.reduce((s, g) => s + g.lon, 0) / e.geometry.length, d = 0.00002;
+    const url = `https://geo.api.vlaanderen.be/3DGRB/wms?service=WMS&version=1.3.0&request=GetFeatureInfo&layers=GRBGEBL1D2&query_layers=GRBGEBL1D2&crs=EPSG:4326` +
+      `&bbox=${la - d},${lo - d},${la + d},${lo + d}&width=11&height=11&i=5&j=5&info_format=application/geo%2Bjson&feature_count=1`;
+    try {
+      const j = await (await fetch(url)).json(), pr = j.features?.[0]?.properties;
+      grb[e.id] = pr ? +String(pr.HN_P99).replace(',', '.') : null;
+    } catch { /* volgende keer opnieuw */ }
+  }));
+  if (grbBestand && k % 80 === 0) fs.writeFileSync(grbBestand, JSON.stringify(grb));
+}
+if (grbBestand) fs.writeFileSync(grbBestand, JSON.stringify(grb));
+let metGrb = 0;
+
 const gebouwen = [];
 let weg = 0;
 for (const e of el) {
@@ -163,6 +184,7 @@ for (const e of el) {
   let v = e.geometry.map(M).map(T);
   if (key(e.geometry[0]) === key(e.geometry[e.geometry.length - 1])) v.pop();
   if (!v.some(binnenVak)) continue;
+  const orig = v;   // de echte vorm, vóór het verschuiven (voor de nok: die moet op de luchtfoto passen)
   v = v.map(([x, y]) => {
     const { i, d } = dichtste(x, y);
     if (d >= GEVEL) return [x, y];
@@ -184,21 +206,26 @@ for (const e of el) {
   if (opp < 6) continue;
   const r = hash(e.id), laag = ['shed', 'garages', 'garage'].includes(t.building);
   const verdiepingen = +t['building:levels'] || (laag ? 0 : t.building === 'apartments' ? 4 : r < 0.62 ? 2 : r < 0.95 ? 3 : 4);
-  const meter = laag ? 2.6 : t.building === 'church' ? 20 : verdiepingen * 3 + 0.5;
+  const geschat = laag ? 2.6 : t.building === 'church' ? 20 : verdiepingen * 3 + 0.5;
+  const echt = grb[e.id] > 1.8 && grb[e.id] < 40 ? grb[e.id] : null;   // top van het gebouw volgens de 3D GRB
+  if (echt) metGrb++;
   const kleur = laag ? 9 : (() => { const q = hash(e.id + 7); return q < 0.62 ? [0, 2, 4, 7][Math.floor(q / 0.62 * 4)] : [1, 3, 5, 6][Math.floor((q - 0.62) / 0.38 * 4)]; })();
   // zadeldak: nok evenwijdig met de straat (zoals bij rijhuizen), enkel voor gewone huizen
   let dak = [0, 0, 0, 0, 0];
   const huis = !laag && ['house', 'yes', 'terrace', 'semidetached_house', 'detached'].includes(t.building) && opp < 220;
   if (huis) {
-    const cx = v.reduce((s, p) => s + p[0], 0) / v.length, cy = v.reduce((s, p) => s + p[1], 0) / v.length;
+    const cx = orig.reduce((s, p) => s + p[0], 0) / orig.length, cy = orig.reduce((s, p) => s + p[1], 0) / orig.length;
     const h = dichtsteStraat(cx, cy).h, ux = Math.cos(h), uy = Math.sin(h), nx = -uy, ny = ux;
-    const ds = v.map(p => p[0] * nx + p[1] * ny), ts = v.map(p => p[0] * ux + p[1] * uy);
+    const ds = orig.map(p => p[0] * nx + p[1] * ny), ts = v.map(p => p[0] * ux + p[1] * uy);
     const c = (Math.min(...ds) + Math.max(...ds)) / 2, half = (Math.max(...ds) - Math.min(...ds)) / 2;
     const t0 = Math.min(...ts), t1 = Math.max(...ts);
-    const nok = Math.min(half * 0.75, 4 * S);
-    if (half > 1.5 * S) dak = [Math.round(nok), Math.round(ux * t0 + nx * c), Math.round(uy * t0 + ny * c), Math.round(ux * t1 + nx * c), Math.round(uy * t1 + ny * c)];
+    let nok = Math.min(half * 0.75, 4 * S);
+    if (echt) nok = Math.min(nok, Math.max(0, echt * S - 2.5 * S));   // goot minstens 2,5 m hoog
+    if (half > 1.5 * S && nok > 0.8 * S) dak = [Math.round(nok), Math.round(ux * t0 + nx * c), Math.round(uy * t0 + ny * c), Math.round(ux * t1 + nx * c), Math.round(uy * t1 + ny * c)];
   }
-  gebouwen.push([Math.round(meter * S), kleur, ...dak, ...v.flat().map(Math.round)]);
+  // hoogte = goot: bij een zadeldak ligt de top (GRB) een nok hoger
+  const goot = echt ? echt * S - dak[0] : geschat * S;
+  gebouwen.push([Math.round(goot), kleur, ...dak, ...v.flat().map(Math.round)]);
 }
 const veelhoeken = gebouwen.map(g => { const v = []; for (let i = 7; i < g.length; i += 2) v.push([g[i], g[i + 1]]); return v; });
 const muurAfstand = (x, y) => {
@@ -331,9 +358,33 @@ for (const s of straatLijnen) {
   }
 }
 
+/* ---------- 9. luchtfoto van Digitaal Vlaanderen voor het hele vak ----------
+   Orthofotomozaïek, middenschalig, winteropnamen, kleur, 2025 (15 cm), Vlaamse Open Data Licentie.
+   WMS in EPSG:4326 (lengte/breedte lineair), net als onze projectie M: de foto ligt dus recht op het vak. */
+const terug = (X, Y) => { const xm = (X - OX) / S, ym = (Y - OY) / S; return [lat0 - ym / ky, xm / kx + lon0]; };
+const [latN, lonW] = terug(vak.x0, vak.y0), [latZ, lonO] = terug(vak.x1, vak.y1);
+const fotoBestanden = [['stad-acacia-foto.jpg', 2048], ['stad-acacia-foto-klein.jpg', 1280]];
+for (const [naam, grootste] of fotoBestanden) {
+  const doel = new URL('../' + naam, import.meta.url);
+  if (fs.existsSync(doel) && !process.env.NIEUWE_FOTO) continue;
+  // de WMS geeft hoogstens 2048 px per kant: de langste kant wordt 'grootste', de verhouding blijft juist
+  const verh = (vak.y1 - vak.y0) / (vak.x1 - vak.x0);
+  const b = verh > 1 ? Math.round(grootste / verh) : grootste, h = verh > 1 ? grootste : Math.round(grootste * verh);
+  const url = `https://geo.api.vlaanderen.be/OMW/wms?service=WMS&version=1.3.0&request=GetMap&layers=OMWRGB25VL&styles=&crs=EPSG:4326` +
+    `&bbox=${latZ},${lonW},${latN},${lonO}&width=${b}&height=${h}&format=image/jpeg`;
+  const r = await fetch(url);
+  if (!r.ok || !(r.headers.get('content-type') || '').includes('image')) throw new Error('luchtfoto mislukt: ' + r.status + ' ' + (await r.text()).slice(0, 300));
+  fs.writeFileSync(doel, Buffer.from(await r.arrayBuffer()));
+  console.log('luchtfoto', naam, b + 'x' + h);
+}
+
 const uit = {
   bron: 'Kaart © OpenStreetMap-bijdragers (ODbL), Acaciapark, Brugse Poort, Gent',
   breed: BREED, gevel: GEVEL,
+  proj: { lat0, lon0, kx, ky, S, OX: Math.round(OX * 100) / 100, OY: Math.round(OY * 100) / 100 },
+  foto: { groot: 'stad-acacia-foto.jpg', klein: 'stad-acacia-foto-klein.jpg', bron: 'Orthofotomozaïek Vlaanderen 2025, Digitaal Vlaanderen',
+          // waar de foto ligt; FOTO_SCHUIF komt uit het afstemmen van de OSM-huislijnen op de randen in de foto (< 1 m)
+          x0: vak.x0 + FOTO_SCHUIF[0], y0: vak.y0 + FOTO_SCHUIF[1], x1: vak.x1 + FOTO_SCHUIF[0], y1: vak.y1 + FOTO_SCHUIF[1] },
   lijn: pad.map(p => p.map(Math.round)),
   vak: Object.fromEntries(Object.entries(vak).map(([k, v]) => [k, Math.round(v)])),
   straatStukken, namen, bordjes, parkNamen,
@@ -341,4 +392,4 @@ const uit = {
 };
 fs.writeFileSync(new URL('../stad-acacia.js', import.meta.url),
   '// Gemaakt met tools/maak-stad.mjs. ' + uit.bron + '\n// gebouw = [hoogte, kleur, nokhoogte, nok x1, y1, x2, y2, ...hoekpunten]; nokhoogte 0 = plat dak\nwindow.STAD_ACACIA = ' + JSON.stringify(uit) + ';\n');
-console.log(`weg ${Math.round(totaal)} eenheden (${Math.round(totaal / S)} m), ${N} punten; gebouwen ${gebouwen.length} (weggelaten ${weg}, zadeldak ${gebouwen.filter(g => g[2]).length}); straten ${straten.length}; bomen ${bomen.length / 2}; geparkeerd ${geparkeerd.length}; bordjes ${bordjes.length}; namen ${namen.map(n => n[3]).join(', ')}; hekken ${uit.hekken.length}`);
+console.log(`weg ${Math.round(totaal)} eenheden (${Math.round(totaal / S)} m), ${N} punten; gebouwen ${gebouwen.length} (weggelaten ${weg}, zadeldak ${gebouwen.filter(g => g[2]).length}); straten ${straten.length}; bomen ${bomen.length / 2}; geparkeerd ${geparkeerd.length}; bordjes ${bordjes.length}; namen ${namen.map(n => n[3]).join(', ')}; hekken ${uit.hekken.length}; echte GRB-hoogte ${metGrb}/${gebouwen.length}`);

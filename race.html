@@ -487,30 +487,57 @@ function bereidStad(c) {   // Path2D's voor straten, parken, huizen, auto's en h
   const hekken = new Path2D(); for (const h of s.hekken) lijn(hekken, h, 0);
   c._stad = { straten, parken, huizen, perKleur, schaduwkant, nokken, autos, ruiten, hekken };
 }
-function tekenStad(c, t, g) {
-  const s = c._stad, b = c.stad.breed, rijbaan = (c.stad.gevel - 32) * 2;   // rijweg + parkeerstroken
+function tekenStad(c, t, g) {   // getekende stad: reserve zolang de luchtfoto niet geladen is
+  const s = c._stad;
   ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 3000, g.y0 - 3000, g.x1 - g.x0 + 6000, g.y1 - g.y0 + 6000);
   ctx.fillStyle = '#86b462'; ctx.fill(s.parken);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   for (const [w, p] of s.straten) { ctx.strokeStyle = '#c9c3b8'; ctx.lineWidth = w + 56; ctx.stroke(p); }   // voetpaden
-  ctx.strokeStyle = '#c9c3b8'; ctx.lineWidth = c.stad.gevel * 2 + 40; ctx.stroke(c._weg);
   for (const [w, p] of s.straten) { ctx.strokeStyle = '#a9a398'; ctx.lineWidth = w + 6; ctx.stroke(p); ctx.strokeStyle = '#55595f'; ctx.lineWidth = w; ctx.stroke(p); }
-  ctx.strokeStyle = '#a9a398'; ctx.lineWidth = rijbaan + 8; ctx.stroke(c._weg);                              // boordsteen
-  ctx.strokeStyle = '#55595f'; ctx.lineWidth = rijbaan; ctx.stroke(c._weg);                                  // asfalt met parkeerstroken
-  ctx.lineCap = 'butt';
-  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = b + 3; ctx.setLineDash([22, 18]); ctx.stroke(c._weg); ctx.setLineDash([]);
-  ctx.strokeStyle = '#4f5359'; ctx.lineWidth = b - 3; ctx.stroke(c._weg);                                    // rijweg
-  ctx.fillStyle = 'rgba(0,0,0,.3)';
-  for (const p of s.autos.values()) { ctx.save(); ctx.translate(4, 5); ctx.fill(p); ctx.restore(); }
-  for (const [k, p] of s.autos) { ctx.fillStyle = PARKKLEUR[k]; ctx.fill(p); }
-  ctx.fillStyle = 'rgba(20,30,40,.55)'; ctx.fill(s.ruiten);
+  tekenStraatStrook(c);
   ctx.save(); ctx.translate(9, 11); ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fill(s.huizen); ctx.restore();   // schaduw
   for (const [k, p] of s.perKleur) { ctx.fillStyle = DAK[k]; ctx.fill(p); }
   ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fill(s.schaduwkant);                                                // een dakvlak in de schaduw
   ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 2; ctx.stroke(s.nokken);
   ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1.5; ctx.stroke(s.huizen);
+}
+// patroon uit een foto-textuur: 'eenheden' = hoeveel spel-eenheden één beeld (512 px) beslaat
+function patroon(naam, eenheden, kleur) {
+  if (!BEELDEN[naam]) return kleur;
+  const p = ctx.createPattern(BEELDEN[naam], 'repeat');
+  if (p.setTransform) p.setTransform(new DOMMatrix().scale(eenheden / BEELDEN[naam].width));
+  return p;
+}
+function tekenStraatStrook(c) {   // stoep, boordsteen, rijweg met parkeerstroken, geparkeerde auto's en dranghekken
+  const s = c._stad, b = c.stad.breed, rijbaan = (c.stad.gevel - 32) * 2;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = patroon('stoeptegels', 64, '#c9c3b8'); ctx.lineWidth = c.stad.gevel * 2; ctx.stroke(c._weg);
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = rijbaan + 14; ctx.stroke(c._weg);                    // schaduwrand van de boordsteen
+  ctx.strokeStyle = '#a9a398'; ctx.lineWidth = rijbaan + 8; ctx.stroke(c._weg);                              // boordsteen
+  ctx.strokeStyle = patroon('asfalt', 90, '#55595f'); ctx.lineWidth = rijbaan; ctx.stroke(c._weg);           // asfalt met parkeerstroken
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = b + 3; ctx.setLineDash([22, 18]); ctx.stroke(c._weg); ctx.setLineDash([]);
+  ctx.strokeStyle = patroon('asfalt', 90, '#4f5359'); ctx.lineWidth = b - 3; ctx.stroke(c._weg);             // rijweg
+  ctx.strokeStyle = 'rgba(70,76,84,.45)'; ctx.lineWidth = rijbaan; ctx.stroke(c._weg);                       // asfalt wat grijzer
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  for (const p of s.autos.values()) { ctx.save(); ctx.translate(4, 5); ctx.fill(p); ctx.restore(); }
+  for (const [k, p] of s.autos) { ctx.fillStyle = PARKKLEUR[k]; ctx.fill(p); }
+  ctx.fillStyle = 'rgba(20,30,40,.55)'; ctx.fill(s.ruiten);
   ctx.lineWidth = 9; ctx.strokeStyle = '#fff'; ctx.stroke(s.hekken);                                       // dranghekken
   ctx.strokeStyle = '#e03a2f'; ctx.setLineDash([24, 24]); ctx.stroke(s.hekken); ctx.setLineDash([]);
+}
+// De stad met luchtfoto, één keer getekend: gebruikt van boven, in het voorbeeldje en als 3D-grond.
+function maakStadBeeld(c) {
+  const g = c.stad.vak, f = c.stad.foto, w = g.x1 - g.x0, h = g.y1 - g.y0;
+  const max = document.body.classList.contains('aanraak') ? 2560 : 4096, sch = Math.min(max / w, max / h);
+  const doek = document.createElement('canvas'); doek.width = Math.round(w * sch); doek.height = Math.round(h * sch);
+  const oud = ctx; ctx = doek.getContext('2d');
+  ctx.setTransform(sch, 0, 0, sch, -g.x0 * sch, -g.y0 * sch);
+  ctx.fillStyle = THEMAS.stad.grond; ctx.fillRect(g.x0, g.y0, w, h);
+  ctx.drawImage(BEELDEN.foto, f.x0, f.y0, f.x1 - f.x0, f.y1 - f.y0);
+  tekenStraatStrook(c);
+  ctx = oud;
+  return doek;
 }
 function tekenNamen() {   // straatnamen en parken (enkel van boven; in 3D staan er bordjes)
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
@@ -531,6 +558,12 @@ function tekenNamen() {   // straatnamen en parken (enkel van boven; in 3D staan
 const straatNaam = i => { let n = ''; for (const [van, naam] of C.stad.straatStukken) if (van <= i) n = naam; return n; };
 
 function tekenOndergrond(c, t, g) {   // grond, zee/lava en weg (ook gebruikt voor de kleine voorbeeldjes)
+  if (c.stad && c._beeld) {
+    const v = c.stad.vak;
+    ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 3000, g.y0 - 3000, g.x1 - g.x0 + 6000, g.y1 - g.y0 + 6000);
+    ctx.drawImage(c._beeld, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
+    return;
+  }
   if (c.stad) return tekenStad(c, t, g);
   ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 2000, g.y0 - 2000, g.x1 - g.x0 + 4000, g.y1 - g.y0 + 4000);
   ctx.fillStyle = t.streep;
@@ -583,9 +616,10 @@ function maakGrondTextuur() {
   return { canvas: c, x0: g.x0, y0: g.y0, w, h };
 }
 async function laadDrie() {
+  if (C.stad) await stadBeeldenKlaar;   // eerst de luchtfoto en de texturen
   if (!drie) { const m = await import('./race3d.js'); drie = m.maakDrie(document.getElementById('c3d')); drie.grootte(W, H); }
   if (drieCircuit !== C) {
-    drie.bouw({ circuit: C, thema: T, themaNaam: C.thema, textuur: maakGrondTextuur(), versiering, pad, breed: BREED, inHuis, dakVorm });
+    drie.bouw({ circuit: C, thema: T, themaNaam: C.thema, textuur: maakGrondTextuur(), versiering, pad, breed: BREED, inHuis, dakVorm, beelden: BEELDEN });
     drieCircuit = C;
   }
   drie.reset();
@@ -601,7 +635,7 @@ function tekenWereld(zoom) {
   tekenStartlijn();
   for (const s of stof) { ctx.fillStyle = C.thema === 'sneeuw' ? `rgba(255,255,255,${s.t})` : `rgba(150,120,70,${s.t})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill(); }
   autos.forEach(tekenAuto);
-  for (const v of versiering) TEKEN[v.soort](v);
+  if (!(C.stad && C._beeld)) for (const v of versiering) TEKEN[v.soort](v);   // op de luchtfoto staan de echte bomen al
 }
 
 function tekenKaartje() {
@@ -752,7 +786,7 @@ function vulCircuitKaarten() {
   const doos = document.getElementById('circuits');
   doos.innerHTML = CIRCUITS.map(c => {
     const best = +localStorage.getItem('raceBest_' + c.id);
-    return `<div class="circuit${c === C ? ' gekozen' : ''}" data-id="${c.id}"><canvas width="300" height="200"></canvas><b>${c.naam}</b><small>${best ? '⭐ ' + tijdTekst(best) : ''}</small>${c.stad ? '<small class="bron">Echte straten: © OpenStreetMap</small>' : ''}</div>`;
+    return `<div class="circuit${c === C ? ' gekozen' : ''}" data-id="${c.id}"><canvas width="300" height="200"></canvas><b>${c.naam}</b><small>${best ? '⭐ ' + tijdTekst(best) : ''}</small>${c.stad ? '<small class="bron">Luchtfoto &amp; hoogtes: Digitaal Vlaanderen · Straten: © OpenStreetMap</small>' : ''}</div>`;
   }).join('');
   doos.querySelectorAll('.circuit').forEach((el, n) => {   // klein voorbeeld van elk circuit
     const c = CIRCUITS[n], p = bouwPad(c), xs = p.map(q => q.x), ys = p.map(q => q.y);
@@ -771,6 +805,18 @@ function vulCircuitKaarten() {
 CIRCUITS.forEach(c => {
   const p = bouwPad(c); c._weg = new Path2D(); p.forEach((q, i) => i ? c._weg.lineTo(q.x, q.y) : c._weg.moveTo(q.x, q.y)); c._weg.closePath();
   if (c.stad) bereidStad(c);
+});
+
+/* ---------- Luchtfoto en foto-texturen voor de stad (pas geladen als het spel al draait) ---------- */
+const BEELDEN = {};
+const laadBeeld = (naam, src) => new Promise(ok => { const i = new Image(); i.onload = () => { BEELDEN[naam] = i; ok(i); }; i.onerror = () => ok(null); i.src = src; });
+const stadBeeldenKlaar = !STAD.length ? Promise.resolve() : Promise.all([
+  laadBeeld('foto', document.body.classList.contains('aanraak') ? STAD[0].stad.foto.klein : STAD[0].stad.foto.groot),
+  ...['asfalt', 'stoeptegels', 'baksteen1', 'baksteen2', 'baksteen3', 'pleister'].map(n => laadBeeld(n, 'textuur/' + n + '.jpg')),
+]).then(() => {
+  if (!BEELDEN.foto) return;   // geen foto (bv. geen internet): de getekende stad blijft
+  for (const c of STAD) { c._beeld = maakStadBeeld(c); if (drieCircuit === c) drieCircuit = null; }
+  if (fase === 'menu') vulCircuitKaarten();
 });
 
 document.getElementById('kleuren').innerHTML = KLEUREN.map(k => `<div class="kleur${k === mijnKleur ? ' gekozen' : ''}" data-kleur="${k}" style="background:${k}"></div>`).join('');

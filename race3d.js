@@ -80,9 +80,11 @@ function maakFinishboog(p, breed) {
   return g;
 }
 
-/* ---------- Stad: huizen met ramen en dranghekken ---------- */
-const GEVEL = ['#a5553a', '#b86b4b', '#8e4a35', '#d2c3a8', '#ece6da', '#9c6b4e', '#8b817a', '#b4846c', '', '#9a8f80'];
-const DAKKLEUR = ['#7a3a2a', '#4f5359', '#8a4632', '#6b6e72', '#6e3326', '#55585c', '#8a5440', '#5e3a2e', '', '#7d7466'];
+/* ---------- Stad: huizen met foto-gevels en luchtfoto-daken, dranghekken ---------- */
+// Elke gevelkleur (0-7, uit stad-acacia.js) krijgt een soort gevel en een lichte tint, zodat niet alle huizen gelijk zijn.
+const SOORT = [0, 1, 0, 3, 3, 2, 1, 2, 0, 1];            // 0-2 = baksteenfoto, 3 = wit pleister; 9 = schuurtje
+const TINT = ['#ffffff', '#efe4da', '#e2d6cc', '#ffffff', '#f2ece2', '#f5ece4', '#d9cfc6', '#fff4ea', '', '#d8d0c6'];
+const SOORT_BEELD = ['baksteen1', 'baksteen2', 'baksteen3', 'pleister'];
 function textuur(teken, w, h) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   teken(c.getContext('2d'));
@@ -90,33 +92,45 @@ function textuur(teken, w, h) {
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-function baksteen(x, w, h) {   // wit met lichte voegen: de kleur van het huis maakt er baksteen van
-  x.fillStyle = '#fff'; x.fillRect(0, 0, w, h);
-  x.fillStyle = '#e2ddd8';
-  for (let y = 0; y < h; y += 4) { x.fillRect(0, y, w, 1); for (let k = (y / 4) % 2 ? 0 : 5; k < w; k += 10) x.fillRect(k, y, 1, 4); }
+function muur(x, w, h, beeld, pxPerMeter) {   // foto van baksteen of pleister (of getekende baksteen als de foto ontbreekt)
+  if (beeld) {
+    const p = x.createPattern(beeld, 'repeat');
+    p.setTransform(new DOMMatrix().scale(pxPerMeter * 1.3 / beeld.width));   // één fotovak = ongeveer 1,3 m muur
+    x.fillStyle = p; x.fillRect(0, 0, w, h);
+    return;
+  }
+  x.fillStyle = '#b86b4b'; x.fillRect(0, 0, w, h);
+  x.fillStyle = 'rgba(255,255,255,.25)';
+  for (let y = 0; y < h; y += 6) { x.fillRect(0, y, w, 1); for (let k = (y / 6) % 2 ? 0 : 8; k < w; k += 16) x.fillRect(k, y, 1, 6); }
 }
 function raam(x, px, py, w, h) {
-  x.fillStyle = '#f1efe9'; x.fillRect(px - 3, py - 3, w + 6, h + 6);            // witte kozijnen
-  x.fillStyle = '#2f3a46'; x.fillRect(px, py, w, h);
-  x.fillStyle = '#5b6f84'; x.fillRect(px, py, w * 0.45, h * 0.4);               // weerspiegeling
-  x.fillStyle = '#f1efe9'; x.fillRect(px + w / 2 - 1.5, py, 3, h); x.fillRect(px, py + h * 0.38, w, 3);
-  x.fillStyle = '#cfc8bd'; x.fillRect(px - 5, py + h + 3, w + 10, 4);           // vensterbank
+  x.fillStyle = '#f1efe9'; x.fillRect(px - 5, py - 5, w + 10, h + 10);          // witte kozijnen
+  x.fillStyle = '#26303b'; x.fillRect(px, py, w, h);
+  const g = x.createLinearGradient(px, py, px + w, py + h);                     // weerspiegeling van de lucht
+  g.addColorStop(0, 'rgba(170,200,230,.55)'); g.addColorStop(.5, 'rgba(90,110,135,.2)'); g.addColorStop(1, 'rgba(40,50,60,0)');
+  x.fillStyle = g; x.fillRect(px, py, w, h);
+  x.fillStyle = '#f1efe9'; x.fillRect(px + w / 2 - 2.5, py, 5, h); x.fillRect(px, py + h * 0.36, w, 5);
+  x.fillStyle = '#bdb6aa'; x.fillRect(px - 9, py + h + 5, w + 18, 7);           // arduinen vensterbank
+  x.fillStyle = 'rgba(0,0,0,.25)'; x.fillRect(px - 9, py + h + 12, w + 18, 3);
 }
-// benedenverdieping van één rijhuis: voordeur en een groot raam
-const deurTextuur = () => textuur(x => {
-  baksteen(x, 128, 64);
-  x.fillStyle = '#e8e4dc'; x.fillRect(12, 6, 30, 58);
-  x.fillStyle = '#3b4f6b'; x.fillRect(15, 9, 24, 55);                             // deur
-  x.fillStyle = '#93a6bb'; x.fillRect(19, 13, 16, 12);                            // ruitje in de deur
-  x.fillStyle = '#d4af37'; x.fillRect(34, 38, 3, 3);                              // klink
-  x.fillStyle = '#9d968b'; x.fillRect(10, 60, 34, 4);                             // dorpel
-  raam(x, 58, 14, 56, 36);
-}, 128, 64);
-const raamTextuur = () => textuur(x => { baksteen(x, 64, 64); raam(x, 14, 12, 36, 36); }, 64, 64);
+// benedenverdieping van één rijhuis (5,5 m breed, 3 m hoog): voordeur en een groot raam
+const deurTextuur = beeld => textuur(x => {
+  muur(x, 256, 128, beeld, 256 / 5.5);
+  x.fillStyle = '#9d968b'; x.fillRect(0, 118, 256, 10);                         // arduinen plint
+  x.fillStyle = '#e8e4dc'; x.fillRect(22, 10, 62, 108);
+  x.fillStyle = '#34465e'; x.fillRect(28, 16, 50, 102);                         // deur
+  x.fillStyle = '#2a384b'; x.fillRect(33, 62, 40, 50);
+  x.fillStyle = '#93a6bb'; x.fillRect(36, 22, 34, 30);                          // ruit in de deur
+  x.fillStyle = '#d4af37'; x.fillRect(68, 74, 5, 5);                            // klink
+  x.fillStyle = '#e0dcd4'; x.fillRect(24, 4, 58, 6);                            // bovenlicht-latei
+  raam(x, 118, 26, 112, 70);
+}, 256, 128);
+const raamTextuur = beeld => textuur(x => { muur(x, 128, 128, beeld, 128 / 2.75); raam(x, 30, 22, 68, 74); }, 128, 128);
 
-// Alle huizen samen in één vorm (snel): benedenverdieping met deuren, verdiepingen met ramen, en de daken.
-function maakHuizen(gebouwen, dakVorm) {
-  const delen = [0, 1, 2].map(() => ({ pos: [], uv: [], kleur: [] }));   // 0 = beneden, 1 = boven, 2 = dak
+// Alle huizen samen in één vorm (snel). Groepen: per geveltype benedenverdieping (deur) en verdiepingen (ramen), en de daken.
+// De daken krijgen de luchtfoto (dezelfde textuur als de grond): wat je van boven ziet, ligt ook op het 3D-dak.
+function maakHuizen(gebouwen, dakVorm, beelden, grond) {
+  const delen = Array.from({ length: 9 }, () => ({ pos: [], uv: [], kleur: [] }));   // 2*soort = beneden, 2*soort+1 = boven, 8 = dak
   const c = new THREE.Color(), V = 42, HUIS = 77;   // V = hoogte van een verdieping, HUIS = breedte van een rijhuis
   const zet = (d, x, y, z, u, v) => { d.pos.push(x, y, z); d.uv.push(u, v); d.kleur.push(c.r, c.g, c.b); };
   const quad = (d, a, b, y0a, y0b, y1a, y1b, u0, u1, v0a, v0b, v1a, v1b) => {
@@ -124,24 +138,26 @@ function maakHuizen(gebouwen, dakVorm) {
     zet(d, a[0], y0a, a[1], u0, v0a); zet(d, b[0], y1b, b[1], u1, v1b); zet(d, a[0], y1a, a[1], u0, v1a);
   };
   for (const g of gebouwen) {
-    const k = g[1], laag = k === 9 || g[0] < V * 1.5, vorm = dakVorm(g), p = vorm.pts;
-    c.set(GEVEL[k]);
+    const k = g[1], soort = SOORT[k], laag = k === 9 || g[0] < V * 1.5, vorm = dakVorm(g), p = vorm.pts;
+    c.set(TINT[k]);
     let u = 0;
     for (let i = 0; i < p.length; i++) {
       const a = p[i], b = p[(i + 1) % p.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (laag) quad(delen[1], a, b, 0, 0, a[2], b[2], 0.02, 0.02, 0.02, 0.02, 0.02, 0.02);
+      // een schuurtje of laag gebouw: enkel muur (stuk van de raamtextuur zonder raam: hoek linksonder)
+      if (laag) quad(delen[2 * soort + 1], a, b, 0, 0, a[2], b[2], 0.02, 0.2, 0.02, 0.02, 0.15, 0.15);
       else {
-        quad(delen[0], a, b, 0, 0, V, V, u / HUIS, (u + l) / HUIS, 0, 0, 1, 1);
-        quad(delen[1], a, b, V, V, a[2], b[2], u / (HUIS / 2), (u + l) / (HUIS / 2), 0, 0, (a[2] - V) / V, (b[2] - V) / V);
+        quad(delen[2 * soort], a, b, 0, 0, V, V, u / HUIS, (u + l) / HUIS, 0, 0, 1, 1);
+        quad(delen[2 * soort + 1], a, b, V, V, a[2], b[2], u / (HUIS / 2), (u + l) / (HUIS / 2), 0, 0, (a[2] - V) / V, (b[2] - V) / V);
       }
       u += l;
     }
-    c.set(DAKKLEUR[k]);
+    c.set('#ffffff');
     for (const helft of vorm.helften) {
       if (helft.length < 3) continue;
       const v2 = helft.map(q => new THREE.Vector2(q[0], q[1]));
       for (const [i, j, l] of THREE.ShapeUtils.triangulateShape(v2, []))
-        for (const q of [helft[i], helft[l], helft[j]]) zet(delen[2], q[0], q[2], q[1], 0, 0);
+        for (const q of [helft[i], helft[l], helft[j]])
+          zet(delen[8], q[0], q[2], q[1], (q[0] - grond.x0) / grond.w, 1 - (q[1] - grond.y0) / grond.h);
     }
   }
   const geo = new THREE.BufferGeometry(), pos = [], uv = [], kleur = [];
@@ -158,9 +174,13 @@ function maakHuizen(gebouwen, dakVorm) {
   geo.computeVertexNormals();
   // muren kunnen met de klok mee of tegen de klok in getekend zijn: daarom beide kanten tekenen
   const mat = map => new THREE.MeshLambertMaterial({ map, vertexColors: true, side: THREE.DoubleSide });
-  return new THREE.Mesh(geo, [mat(deurTextuur()), mat(raamTextuur()), mat(null)]);
+  const materialen = [];
+  for (const naam of SOORT_BEELD) materialen.push(mat(deurTextuur(beelden?.[naam])), mat(raamTextuur(beelden?.[naam])));
+  materialen.push(new THREE.MeshLambertMaterial({ map: grond.tex, side: THREE.DoubleSide }));
+  const mesh = new THREE.Mesh(geo, materialen);
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
 }
-
 const PARKKLEUR = ['#d9d9d9', '#2b2b2b', '#f2f2f2', '#7f8c8d', '#2c3e72', '#8e1b1b', '#bdc3c7', '#3d5a40'];
 function maakGeparkeerd(lijst) {   // geparkeerde auto's: carrosserie en ramen
   const g = new THREE.Group();
@@ -223,17 +243,32 @@ export function maakDrie(canvas) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(64, 1, 2, 5000);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x556644, 1.7));
-  const zon = new THREE.DirectionalLight(0xffffff, 1.5); zon.position.set(400, 700, 250); scene.add(zon);
+  const zon = new THREE.DirectionalLight(0xffffff, 1.5); zon.position.set(400, 700, 250); scene.add(zon); scene.add(zon.target);
+  // schaduwen (enkel in de stad): een schaduwgebied dat met de speler meeschuift
+  const aanraak = navigator.maxTouchPoints > 0;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  zon.shadow.mapSize.set(aanraak ? 1024 : 2048, aanraak ? 1024 : 2048);
+  Object.assign(zon.shadow.camera, { left: -650, right: 650, top: 650, bottom: -650, near: 10, far: 2500 });
+  zon.shadow.bias = -0.0008; zon.shadow.normalBias = 1.5;
 
   let wereld = null, modellen = [], kleuren = '', camHoek = null, inHuis = null;
   const camPos = new THREE.Vector3(), kijk = new THREE.Vector3();
 
-  function bouw({ circuit, thema, themaNaam, textuur, versiering, pad, breed, inHuis: inHuisFn, dakVorm }) {
-    if (wereld) { scene.remove(wereld); wereld.traverse(o => { if (o.material?.map) o.material.map.dispose(); }); }
+  function bouw({ circuit, thema, themaNaam, textuur, versiering, pad, breed, inHuis: inHuisFn, dakVorm, beelden }) {
+    if (wereld) { scene.remove(wereld); wereld.traverse(o => { for (const m of [].concat(o.material || [])) m.map?.dispose(); }); }
     wereld = new THREE.Group(); scene.add(wereld);
     const lucht = LUCHT[themaNaam] ?? 0x9fd4ff;
     scene.background = new THREE.Color(lucht);
     scene.fog = new THREE.Fog(lucht, 600, 2600);
+    zon.castShadow = !!circuit.stad;
+    if (circuit.stad) {   // lucht met een kleurverloop: diepblauw boven, licht aan de horizon (de mist heeft die kleur)
+      const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+      const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
+      g.addColorStop(0, '#4f8fd0'); g.addColorStop(0.55, '#a9cbe8'); g.addColorStop(1, '#dfe8ee');
+      x.fillStyle = g; x.fillRect(0, 0, 4, 256);
+      const lt = new THREE.CanvasTexture(c); lt.colorSpace = THREE.SRGBColorSpace;
+      scene.background = lt; scene.fog = new THREE.Fog(0xdfe8ee, 700, 2600);
+    }
 
     const basis = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: thema.grond }));
     basis.position.y = -0.6; wereld.add(basis);
@@ -244,7 +279,7 @@ export function maakDrie(canvas) {
     const tex = new THREE.CanvasTexture(textuur.canvas);
     tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const grond = new THREE.Mesh(new THREE.PlaneGeometry(textuur.w, textuur.h).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: tex }));
-    grond.position.set(textuur.x0 + textuur.w / 2, 0, textuur.y0 + textuur.h / 2); wereld.add(grond);
+    grond.position.set(textuur.x0 + textuur.w / 2, 0, textuur.y0 + textuur.h / 2); grond.receiveShadow = true; wereld.add(grond);
 
     // versiering: per soort en per deel één InstancedMesh (snel, ook op een iPhone)
     const perDeel = new Map();
@@ -270,8 +305,8 @@ export function maakDrie(canvas) {
     }
     wereld.add(maakFinishboog(pad[0], breed));
     if (circuit.stad) {
-      wereld.add(maakHuizen(circuit.stad.gebouwen, dakVorm)); wereld.add(maakHekken(circuit.stad.hekken));
-      wereld.add(maakGeparkeerd(circuit.stad.geparkeerd)); wereld.add(maakBordjes(circuit.stad.bordjes));
+      wereld.add(maakHuizen(circuit.stad.gebouwen, dakVorm, beelden, { tex, ...textuur })); wereld.add(maakHekken(circuit.stad.hekken));
+      const geparkeerd = maakGeparkeerd(circuit.stad.geparkeerd); geparkeerd.traverse(o => { o.castShadow = true; }); wereld.add(geparkeerd); wereld.add(maakBordjes(circuit.stad.bordjes));
     }
     inHuis = circuit.stad ? inHuisFn : null;
     camHoek = null;
@@ -301,6 +336,9 @@ export function maakDrie(canvas) {
     camera.lookAt(kijk);
     const fov = 62 + Math.min(1, Math.abs(speler.v) / 570) * 12;
     if (Math.abs(camera.fov - fov) > 0.1) { camera.fov = fov; camera.updateProjectionMatrix(); }
+    if (zon.castShadow) {   // de zon (en dus het schaduwgebied) schuift mee met de speler
+      zon.position.set(speler.x + 520, 430, speler.y + 330); zon.target.position.set(speler.x, 0, speler.y); zon.target.updateMatrixWorld();
+    }
     renderer.render(scene, camera);
   }
 
