@@ -43,6 +43,7 @@
   .circuit canvas { width:100%; aspect-ratio:3/2; border-radius:9px; display:block; }
   .circuit b { display:block; margin-top:4px; font-size:15px; }
   .circuit small { display:block; font-size:12px; opacity:.85; min-height:15px; }
+  .circuit small.bron { font-size:10px; opacity:.7; min-height:0; }
   button.groot { font:inherit; font-size:26px; font-weight:800; padding:12px 34px; border:0; border-radius:16px; background:#f39c12; color:#fff; cursor:pointer; }
   button.klein { font:inherit; font-size:18px; font-weight:700; padding:10px 20px; border:0; border-radius:14px; background:#fff3; color:#fff; cursor:pointer; }
   #uitslag { font-size:20px; line-height:1.6; }
@@ -94,6 +95,7 @@
   <a href="index.html" style="color:#fff">🏠 Terug naar het begin</a>
 </div>
 
+<script src="stad-acacia.js"></script>
 <script>
 // Oudere iPhones/iPads (iOS 15 en ouder) kennen roundRect niet: dan zelf tekenen
 if (!CanvasRenderingContext2D.prototype.roundRect) CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
@@ -135,7 +137,10 @@ const THEMAS = {
   strand:   { grond:'#f1dea6', streep:'#ead59a', berm:'rgba(200,170,110,.3)', stoep:'#f39c12', decor:[['palm',.6],['parasol',.25],['rots',.15]] },
   herfst:   { grond:'#6c8a38', streep:'#75933f', berm:'rgba(140,90,40,.3)',   stoep:'#d63a2c', decor:[['herfstboom',.75],['boom',.1],['paddenstoel',.15]] },
   vulkaan:  { grond:'#4b3a34', streep:'#54423b', berm:'rgba(20,10,8,.35)',    stoep:'#f39c12', decor:[['rots',.65],['lava',.35]] },
+  stad:     { grond:'#6f9150', streep:'#6f9150', berm:'none', stoep:'#fff', decor:[['boom',1]] },   // tuintjes achter de huizen
 };
+// Echte straten en huizen uit OpenStreetMap (stad-acacia.js, gemaakt met tools/maak-stad.mjs)
+const STAD = window.STAD_ACACIA ? [{ id:'acacia', naam:'🏘️ Acaciapark', thema:'stad', stad: window.STAD_ACACIA }] : [];
 const CIRCUITS = [
   { id:'kamp', naam:'⛺ Kampterrein', thema:'kamp', punten:[[300,800],[300,420],[480,230],[900,200],[1200,350],[1500,250],[1900,250],[2150,450],[2150,800],
       [1900,1000],[1550,950],[1300,1100],[1350,1350],[1100,1500],[700,1450],[450,1250]] },
@@ -149,12 +154,13 @@ const CIRCUITS = [
       [2400,450],[2350,900],[2100,1150],[2300,1500],[1900,1700],[1400,1500],[900,1650],[500,1450]] },
   { id:'vulkaan', naam:'🌋 Vulkaan', thema:'vulkaan', lava:{ x:1350, y:720, r:200 }, punten:[[500,900],[500,500],[800,250],[1300,200],[1800,250],[2200,500],
       [2300,900],[2100,1300],[1700,1350],[1500,1100],[1250,1100],[1050,1350],[700,1400]] },
+  ...STAD,
 ];
 const PER = 30, BREED = 160, RONDES = 3;
 let C, T, pad, N, weg, versiering, grenzen;
 
-function bouwPad(punten) {
-  const p = [];
+function bouwPad(c) {
+  const punten = c.punten || [], p = c.stad ? c.stad.lijn.map(([x, y]) => ({ x, y })) : [];   // de stad heeft al een fijne lijn
   for (let i = 0; i < punten.length; i++) {
     const p0 = punten[(i - 1 + punten.length) % punten.length], p1 = punten[i], p2 = punten[(i + 1) % punten.length], p3 = punten[(i + 2) % punten.length];
     for (let s = 0; s < PER; s++) {
@@ -171,13 +177,20 @@ function bouwPad(punten) {
 }
 
 function laadCircuit(c) {
-  C = c; T = THEMAS[c.thema]; pad = bouwPad(c.punten); N = pad.length;
+  C = c; T = THEMAS[c.thema]; pad = bouwPad(c); N = pad.length;
   weg = new Path2D(); pad.forEach((p, i) => i ? weg.lineTo(p.x, p.y) : weg.moveTo(p.x, p.y)); weg.closePath();
   const xs = pad.map(p => p.x), ys = pad.map(p => p.y);
   grenzen = { x0: Math.min(...xs) - 400, y0: Math.min(...ys) - 400, x1: Math.max(...xs) + 400, y1: Math.max(...ys) + 400 };
   let zaad = 7 + c.id.length * 131;
   const rnd = () => (zaad = (zaad * 16807) % 2147483647) / 2147483647;
   versiering = [];
+  muren = null;
+  if (c.stad) {   // echte bomen, en de huizen worden muren
+    grenzen = { ...c.stad.vak };
+    for (let k = 0; k < c.stad.bomen.length; k += 2) versiering.push({ x: c.stad.bomen[k], y: c.stad.bomen[k + 1], soort: 'boom', r: 30 + rnd() * 14, k: rnd() });
+    muren = maakMuren(c.stad.gebouwen);
+    return;
+  }
   let pogingen = 0;
   while (versiering.length < 230 && pogingen++ < 20000) {
     const x = grenzen.x0 + rnd() * (grenzen.x1 - grenzen.x0), y = grenzen.y0 + rnd() * (grenzen.y1 - grenzen.y0);
@@ -200,6 +213,60 @@ function dichtste(x, y, rond) {   // index van het dichtste punt op de weg (zoek
   return { i: beste, d: Math.sqrt(bd) };
 }
 const hoekVerschil = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+/* ---------- Muren (huizen in de stad) ----------
+   Elk huis is een veelhoek. Een raster van vakjes zegt welke huizen in de buurt liggen, zodat elke auto
+   maar een paar huizen moet nakijken. */
+let muren = null;
+const VAK = 256, AUTO_STRAAL = 17;
+function maakMuren(gebouwen) {
+  const lijst = [], raster = new Map();
+  for (const g of gebouwen) {
+    const v = []; for (let k = 2; k < g.length; k += 2) v.push([g[k], g[k + 1]]);
+    const xs = v.map(p => p[0]), ys = v.map(p => p[1]);
+    const m = { v, x0: Math.min(...xs) - AUTO_STRAAL, y0: Math.min(...ys) - AUTO_STRAAL, x1: Math.max(...xs) + AUTO_STRAAL, y1: Math.max(...ys) + AUTO_STRAAL };
+    lijst.push(m);
+    for (let i = Math.floor(m.x0 / VAK); i <= Math.floor(m.x1 / VAK); i++)
+      for (let j = Math.floor(m.y0 / VAK); j <= Math.floor(m.y1 / VAK); j++) {
+        const k = i + ',' + j; if (!raster.has(k)) raster.set(k, []); raster.get(k).push(m);
+      }
+  }
+  return { lijst, raster };
+}
+function binnenVeelhoek(x, y, v) {
+  let binnen = false;
+  for (let i = 0, j = v.length - 1; i < v.length; j = i++)
+    if ((v[i][1] > y) !== (v[j][1] > y) && x < (v[j][0] - v[i][0]) * (y - v[i][1]) / (v[j][1] - v[i][1]) + v[i][0]) binnen = !binnen;
+  return binnen;
+}
+const murenBij = (x, y) => muren.raster.get(Math.floor(x / VAK) + ',' + Math.floor(y / VAK)) || [];
+function inHuis(x, y) {   // ook gebruikt door de 3D-camera, zodat die niet in een huis gaat hangen
+  if (!muren) return false;
+  for (const m of murenBij(x, y)) if (x > m.x0 && x < m.x1 && y > m.y0 && y < m.y1 && binnenVeelhoek(x, y, m.v)) return true;
+  return false;
+}
+function muurBotsing(a) {   // duwt de auto uit een huis en remt hem af; geeft true bij een botsing
+  let geraakt = false;
+  for (const m of murenBij(a.x, a.y)) {
+    if (a.x < m.x0 || a.x > m.x1 || a.y < m.y0 || a.y > m.y1) continue;
+    let bx = 0, by = 0, bd = Infinity;
+    for (let i = 0; i < m.v.length; i++) {   // dichtste punt op de muren van dit huis
+      const p = m.v[i], q = m.v[(i + 1) % m.v.length], dx = q[0] - p[0], dy = q[1] - p[1];
+      const f = Math.max(0, Math.min(1, ((a.x - p[0]) * dx + (a.y - p[1]) * dy) / (dx * dx + dy * dy || 1)));
+      const x = p[0] + dx * f, y = p[1] + dy * f, d = Math.hypot(a.x - x, a.y - y);
+      if (d < bd) { bd = d; bx = x; by = y; }
+    }
+    const binnen = binnenVeelhoek(a.x, a.y, m.v);
+    if (!binnen && bd >= AUTO_STRAAL) continue;
+    let ux = binnen ? bx - a.x : a.x - bx, uy = binnen ? by - a.y : a.y - by;   // richting van de muur naar buiten
+    const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+    a.x = bx + ux * AUTO_STRAAL; a.y = by + uy * AUTO_STRAAL;
+    const tegen = -(Math.cos(a.a) * ux + Math.sin(a.a) * uy) * a.v;   // hoe hard je recht op de muur rijdt
+    if (tegen > 0) a.v *= tegen > 180 ? 0.35 : 0.85;
+    geraakt = true;
+  }
+  return geraakt;
+}
 
 /* ---------- Auto's ---------- */
 const KLEUREN = ['#e74c3c', '#3498db', '#f1c40f', '#9b59b6', '#ff7ab6', '#1abc9c'];
@@ -257,6 +324,10 @@ function rijd(a, dt) {
 
   const grens = BREED / 2 + 150, p = pad[i];   // verder dan dit kan je niet van de weg
   if (d > grens) { a.x = p.x + (a.x - p.x) * grens / d; a.y = p.y + (a.y - p.y) * grens / d; a.v *= 0.5; }
+  if (muren && muurBotsing(a)) {
+    a.muur = (a.muur || 0) + 1;
+    if (Math.random() < 0.4) stof.push({ x: a.x + Math.cos(a.a) * 22, y: a.y + Math.sin(a.a) * 22, r: 5, t: 0.4 });
+  }
   if (!opWeg && Math.abs(a.v) > 60 && Math.random() < 0.5)
     stof.push({ x: a.x - Math.cos(a.a) * 20, y: a.y - Math.sin(a.a) * 20, r: 6, t: 0.6 });
 
@@ -341,7 +412,42 @@ function tekenAuto(a) {
   ctx.strokeText(label, a.x, a.y - 26); ctx.fillText(label, a.x, a.y - 26);
 }
 
+const DAK = ['#a4503a', '#5b6068', '#b5614a', '#8a8d91', '#94452f', '#6d6f73', '#b8735a', '#7b4a3a', '', '#a69a88'];   // 9 = schuurtje
+function bereidStad(c) {   // Path2D's voor straten, parken, huizen en hekken (één keer)
+  const s = c.stad, lijn = (pad, v, van) => { for (let k = van; k < v.length; k += 2) k === van ? pad.moveTo(v[k], v[k + 1]) : pad.lineTo(v[k], v[k + 1]); };
+  const straten = new Map();
+  for (const st of s.straten) { if (!straten.has(st[0])) straten.set(st[0], new Path2D()); lijn(straten.get(st[0]), st, 1); }
+  const parken = new Path2D(); for (const p of s.parken) { lijn(parken, p, 0); parken.closePath(); }
+  const huizen = new Path2D(), perKleur = new Map();
+  for (const h of s.gebouwen) {
+    if (!perKleur.has(h[1])) perKleur.set(h[1], new Path2D());
+    for (const p of [huizen, perKleur.get(h[1])]) { lijn(p, h, 2); p.closePath(); }
+  }
+  const hekken = new Path2D(); for (const h of s.hekken) lijn(hekken, h, 0);
+  c._stad = { straten, parken, huizen, perKleur, hekken };
+}
+function tekenStad(c, t, g) {
+  const s = c._stad;
+  ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 3000, g.y0 - 3000, g.x1 - g.x0 + 6000, g.y1 - g.y0 + 6000);
+  ctx.fillStyle = '#86b462'; ctx.fill(s.parken);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const [b, p] of s.straten) { ctx.strokeStyle = '#c9c3b8'; ctx.lineWidth = b + 110; ctx.stroke(p); }   // voetpaden
+  ctx.strokeStyle = '#c9c3b8'; ctx.lineWidth = c.stad.gevel * 2 + 40; ctx.stroke(c._weg);
+  for (const [b, p] of s.straten) { ctx.strokeStyle = '#55595f'; ctx.lineWidth = b; ctx.stroke(p); }       // zijstraten
+  ctx.strokeStyle = '#b0aaa0'; ctx.lineWidth = BREED + 16; ctx.stroke(c._weg);                              // boordsteen
+  ctx.strokeStyle = '#4d5157'; ctx.lineWidth = BREED; ctx.stroke(c._weg);
+  ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = BREED - 14; ctx.stroke(c._weg);                // witte randlijnen
+  ctx.strokeStyle = '#4d5157'; ctx.lineWidth = BREED - 22; ctx.stroke(c._weg);
+  ctx.lineCap = 'butt';
+  ctx.save(); ctx.translate(10, 12); ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fill(s.huizen); ctx.restore();   // schaduw
+  for (const [k, p] of s.perKleur) { ctx.fillStyle = DAK[k]; ctx.fill(p); }
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2; ctx.stroke(s.huizen);
+  ctx.lineWidth = 9; ctx.strokeStyle = '#fff'; ctx.stroke(s.hekken);                                       // dranghekken
+  ctx.strokeStyle = '#e03a2f'; ctx.setLineDash([24, 24]); ctx.stroke(s.hekken); ctx.setLineDash([]);
+}
+
 function tekenOndergrond(c, t, g) {   // grond, zee/lava en weg (ook gebruikt voor de kleine voorbeeldjes)
+  if (c.stad) return tekenStad(c, t, g);
   ctx.fillStyle = t.grond; ctx.fillRect(g.x0 - 2000, g.y0 - 2000, g.x1 - g.x0 + 4000, g.y1 - g.y0 + 4000);
   ctx.fillStyle = t.streep;
   for (let x = g.x0 - 2000; x < g.x1 + 2000; x += 160) ctx.fillRect(x, g.y0 - 2000, 80, g.y1 - g.y0 + 4000);
@@ -394,7 +500,7 @@ function maakGrondTextuur() {
 async function laadDrie() {
   if (!drie) { const m = await import('./race3d.js'); drie = m.maakDrie(document.getElementById('c3d')); drie.grootte(W, H); }
   if (drieCircuit !== C) {
-    drie.bouw({ circuit: C, thema: T, themaNaam: C.thema, textuur: maakGrondTextuur(), versiering, pad, breed: BREED });
+    drie.bouw({ circuit: C, thema: T, themaNaam: C.thema, textuur: maakGrondTextuur(), versiering, pad, breed: BREED, inHuis });
     drieCircuit = C;
   }
   drie.reset();
@@ -528,22 +634,26 @@ function vulCircuitKaarten() {
   const doos = document.getElementById('circuits');
   doos.innerHTML = CIRCUITS.map(c => {
     const best = +localStorage.getItem('raceBest_' + c.id);
-    return `<div class="circuit${c === C ? ' gekozen' : ''}" data-id="${c.id}"><canvas width="300" height="200"></canvas><b>${c.naam}</b><small>${best ? '⭐ ' + tijdTekst(best) : ''}</small></div>`;
+    return `<div class="circuit${c === C ? ' gekozen' : ''}" data-id="${c.id}"><canvas width="300" height="200"></canvas><b>${c.naam}</b><small>${best ? '⭐ ' + tijdTekst(best) : ''}</small>${c.stad ? '<small class="bron">Echte straten: © OpenStreetMap</small>' : ''}</div>`;
   }).join('');
   doos.querySelectorAll('.circuit').forEach((el, n) => {   // klein voorbeeld van elk circuit
-    const c = CIRCUITS[n], p = bouwPad(c.punten), xs = p.map(q => q.x), ys = p.map(q => q.y);
+    const c = CIRCUITS[n], p = bouwPad(c), xs = p.map(q => q.x), ys = p.map(q => q.y);
     const g = { x0: Math.min(...xs) - 200, y0: Math.min(...ys) - 200, x1: Math.max(...xs) + 200, y1: Math.max(...ys) + 200 };
     const vc = el.querySelector('canvas'), k = Math.min(300 / (g.x1 - g.x0), 200 / (g.y1 - g.y0));
     const oud = ctx;
     ctx = vc.getContext('2d');
     ctx.setTransform(k, 0, 0, k, (300 - (g.x1 - g.x0) * k) / 2 - g.x0 * k, (200 - (g.y1 - g.y0) * k) / 2 - g.y0 * k);
     tekenOndergrond(c, THEMAS[c.thema], g);
+    if (c.stad) { ctx.strokeStyle = 'rgba(255,211,77,.75)'; ctx.lineWidth = 70; ctx.stroke(c._weg); }   // toon het rondje tussen al die straten
     ctx = oud;
     el.onclick = () => kiesCircuit(c);
   });
 }
 
-CIRCUITS.forEach(c => { const p = bouwPad(c.punten); c._weg = new Path2D(); p.forEach((q, i) => i ? c._weg.lineTo(q.x, q.y) : c._weg.moveTo(q.x, q.y)); c._weg.closePath(); });
+CIRCUITS.forEach(c => {
+  const p = bouwPad(c); c._weg = new Path2D(); p.forEach((q, i) => i ? c._weg.lineTo(q.x, q.y) : c._weg.moveTo(q.x, q.y)); c._weg.closePath();
+  if (c.stad) bereidStad(c);
+});
 
 document.getElementById('kleuren').innerHTML = KLEUREN.map(k => `<div class="kleur${k === mijnKleur ? ' gekozen' : ''}" data-kleur="${k}" style="background:${k}"></div>`).join('');
 document.getElementById('kleuren').addEventListener('click', e => {
@@ -566,6 +676,7 @@ vulCircuitKaarten();
 const hash = new URLSearchParams(location.hash.slice(1));
 if (hash.get('camera')) zetCamera(hash.get('camera'));
 if (hash.get('start')) { const c = CIRCUITS.find(c => c.id === hash.get('start')); if (c) kiesCircuit(c); start(); }
+if (hash.get('plek')) { const p = pad[+hash.get('plek') % N]; Object.assign(speler, { x: p.x, y: p.y, a: p.hoek, idx: +hash.get('plek') % N }); }   // #plek=200: zet je auto ergens anders (testen)
 if (hash.has('zelftest')) {   // elk circuit: ligt de weg nergens te dicht bij zichzelf, en rijden alle auto's 3 rondes uit?
   const uit = [];
   for (const c of CIRCUITS) {
@@ -583,7 +694,19 @@ if (hash.has('zelftest')) {   // elk circuit: ligt de weg nergens te dicht bij z
       tijd += 1 / 60; autos.forEach(a => rijd(a, 1 / 60)); botsen(); stappen++;
       autos.forEach(a => { if (dichtste(a.x, a.y, a.idx).d > BREED / 2) gras++; });
     }
-    uit.push(`${c.id}: afstand ${minAfstand.toFixed(0)} lava ${lavaAfstand.toFixed(0)} zee ${zeeAfstand.toFixed(0)} gras ${(100 * gras / (stappen * 4)).toFixed(1)}% klaar ${finishVolgorde.length}/4 tijd ${tijd.toFixed(0)}s`);
+    const race = `gras ${(100 * gras / (stappen * 4)).toFixed(1)}%${muren ? ' muur ' + autos.reduce((s, a) => s + (a.muur || 0), 0) : ''} klaar ${finishVolgorde.length}/4 tijd ${tijd.toFixed(0)}s`;
+    let doorMuur = '';
+    if (muren) {   // rijd vol gas recht op de huizen af, vanuit 60 plekken: je mag nooit in een huis belanden
+      let fout = 0, botst = 0; toets.gas = true;
+      for (let k = 0; k < 60; k++) {
+        const i = (k * 37) % N, p = pad[i];
+        Object.assign(speler, { ai: false, klaar: false, x: p.x, y: p.y, idx: i, v: 570, a: p.hoek + (k % 2 ? 1 : -1) * (0.6 + (k % 5) * 0.2), muur: 0 });
+        for (let s = 0; s < 120; s++) { rijd(speler, 1 / 60); if (inHuis(speler.x, speler.y)) fout++; }
+        if (speler.muur) botst++;
+      }
+      toets.gas = false; doorMuur = ` muurtest ${botst}/60 botst, ${fout} keer in een huis`;
+    }
+    uit.push(`${c.id}:${doorMuur} afstand ${minAfstand.toFixed(0)} lava ${lavaAfstand.toFixed(0)} zee ${zeeAfstand.toFixed(0)} ${race}`);
   }
   document.title = 'ZELFTEST ' + uit.join(' || ');
   toonMenu();
