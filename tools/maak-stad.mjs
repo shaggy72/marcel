@@ -6,11 +6,13 @@ import fs from 'node:fs';
 
 const BBOX = [51.0575, 3.6935, 51.0645, 3.7050];
 const ROUTE = ['Bevrijdingslaan', 'Acaciastraat', 'Kastanjestraat', 'Hulstboomstraat'];   // met de klok mee
-const S = 18;                // spel-eenheden per meter
-const BREED = 160;           // breedte van de weg (zoals race.html)
-const GEVEL = BREED / 2 + 45; // gevels staan minstens zo ver van het midden van de weg (de rest is voetpad)
+const S = 14;                // spel-eenheden per meter: een auto in het spel (48) is dan ongeveer 3,5 m
+const BREED = 120;           // breedte van de rijweg in de stad (race.html leest dit uit het bestand)
+const PARKEER = 28;          // strook met geparkeerde auto's naast de rijweg
+const GEVEL = BREED / 2 + PARKEER + 32; // gevels staan zo ver van het midden van de weg (parkeerstrook + voetpad)
 const GRENS = BREED / 2 + 150; // verder kan je in het spel niet van de weg (zoals race.html)
-const BOCHT = 110;           // straal van de afgeronde hoeken (midden van de weg)
+const BOCHT = 95;            // straal van de afgeronde hoeken (midden van de weg)
+const VERDIEP = 3 * S;       // hoogte van een verdieping
 const STAP = 13;             // afstand tussen de punten van de weg
 const START = 700;           // startlijn zoveel eenheden na de hoek Hulstboomstraat/Bevrijdingslaan
 const RAND = 75 * S;         // gebouwen tot zo ver rond het circuit
@@ -62,9 +64,11 @@ function kortste(a, b, straat) {
   return r;
 }
 let lijn = [];
+const routeStukken = [];
 for (let i = 0; i < ROUTE.length; i++) {
   const stuk = kortste(hoeken[i], hoeken[(i + 1) % ROUTE.length], ROUTE[i]).map(k => pos.get(k));
   lijn.push(...stuk.slice(0, -1));
+  routeStukken.push({ naam: ROUTE[i], pts: stuk });
 }
 lijn = lijn.map(([x, y]) => [x * S, y * S]);
 // bijna rechte tussenpunten weglaten (OSM-straten hebben veel kleine knikjes)
@@ -120,7 +124,7 @@ const vak = { x0: Math.min(...xs) - RAND, y0: Math.min(...ys) - RAND, x1: Math.m
 const binnenVak = ([x, y]) => x > vak.x0 && x < vak.x1 && y > vak.y0 && y < vak.y1;
 const dichtste = (x, y) => { let b = 0, bd = Infinity; pad.forEach((p, i) => { const d = (p[0] - x) ** 2 + (p[1] - y) ** 2; if (d < bd) { bd = d; b = i; } }); return { i: b, d: Math.sqrt(bd) }; };
 
-/* ---------- 3. gebouwen: gevels die te dicht bij de weg staan schuiven naar achter ---------- */
+/* ---------- 3. straten (voor de tekening, de namen en de richting van de daken) ---------- */
 const hash = n => { let h = n % 2147483647; h = (h * 16807) % 2147483647; h = (h * 16807) % 2147483647; return h / 2147483647; };
 const binnenVeelhoek = (x, y, v) => {
   let in_ = false;
@@ -128,6 +132,29 @@ const binnenVeelhoek = (x, y, v) => {
     if ((v[i][1] > y) !== (v[j][1] > y) && x < (v[j][0] - v[i][0]) * (y - v[i][1]) / (v[j][1] - v[i][1]) + v[i][0]) in_ = !in_;
   return in_;
 };
+const ALLE = ['primary', 'secondary', 'tertiary', 'residential', 'living_street', 'unclassified', 'pedestrian', 'service'];
+const straatLijnen = [];   // { naam, b, v }
+for (const e of el) {
+  const t = e.tags || {};
+  if (!e.geometry || !ALLE.includes(t.highway)) continue;
+  const v = e.geometry.map(M).map(T);
+  if (!v.some(binnenVak)) continue;
+  const b = t.highway === 'primary' ? 8 : t.highway === 'tertiary' ? 6.5 : t.highway === 'service' ? 3.5 : 5;
+  straatLijnen.push({ naam: t.name || '', b: Math.round(b * S), v });
+}
+const straten = straatLijnen.map(s => [s.b, ...s.v.flat().map(Math.round)]);
+function dichtsteStraat(x, y) {   // richting van het dichtste straatstuk
+  let best = { d: Infinity, h: 0 };
+  for (const s of straatLijnen) for (let i = 1; i < s.v.length; i++) {
+    const a = s.v[i - 1], b = s.v[i], dx = b[0] - a[0], dy = b[1] - a[1];
+    const f = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const d = Math.hypot(x - a[0] - dx * f, y - a[1] - dy * f);
+    if (d < best.d) best = { d, h: Math.atan2(dy, dx), naam: s.naam };
+  }
+  return best;
+}
+
+/* ---------- 4. gebouwen: gevels die te dicht bij de weg staan schuiven naar achter; rijhuizen krijgen een zadeldak ---------- */
 const gebouwen = [];
 let weg = 0;
 for (const e of el) {
@@ -142,7 +169,6 @@ for (const e of el) {
     const p = pad[i], ux = d > 1 ? (x - p[0]) / d : 0, uy = d > 1 ? (y - p[1]) / d : 0;
     return [p[0] + ux * GEVEL, p[1] + uy * GEVEL];
   });
-  // weg met punten die bijna samenvallen
   v = v.filter((p, i) => afst(p, v[(i + 1) % v.length]) > 2);
   if (v.length < 3) { weg++; continue; }
   // controle: geen enkele muur mag nog in de weg of op het voetpad staan
@@ -154,44 +180,27 @@ for (const e of el) {
   if (!slecht) for (const p of pad) if (binnenVeelhoek(p[0], p[1], v)) { slecht = true; break; }
   if (slecht) { weg++; continue; }
   let opp = 0; v.forEach((p, i) => { const q = v[(i + 1) % v.length]; opp += p[0] * q[1] - q[0] * p[1]; });
-  if (Math.abs(opp) / 2 < 6 * S * S) continue;   // kleiner dan 6 m²
+  opp = Math.abs(opp) / 2 / (S * S);   // m²
+  if (opp < 6) continue;
   const r = hash(e.id), laag = ['shed', 'garages', 'garage'].includes(t.building);
-  const verdiepingen = +t['building:levels'] || (laag ? 0 : t.building === 'apartments' ? 4 : r < 0.6 ? 2 : r < 0.93 ? 3 : 4);
-  const meter = laag ? 2.6 : t.building === 'church' ? 22 : verdiepingen * 3.1 + 1.2;
-  const kleur = laag ? 9 : Math.floor(hash(e.id + 7) * 8);   // 0-7 gevelkleuren, 9 = schuurtje
-  gebouwen.push([Math.round(meter * S), kleur, ...v.flat().map(Math.round)]);
+  const verdiepingen = +t['building:levels'] || (laag ? 0 : t.building === 'apartments' ? 4 : r < 0.62 ? 2 : r < 0.95 ? 3 : 4);
+  const meter = laag ? 2.6 : t.building === 'church' ? 20 : verdiepingen * 3 + 0.5;
+  const kleur = laag ? 9 : (() => { const q = hash(e.id + 7); return q < 0.62 ? [0, 2, 4, 7][Math.floor(q / 0.62 * 4)] : [1, 3, 5, 6][Math.floor((q - 0.62) / 0.38 * 4)]; })();
+  // zadeldak: nok evenwijdig met de straat (zoals bij rijhuizen), enkel voor gewone huizen
+  let dak = [0, 0, 0, 0, 0];
+  const huis = !laag && ['house', 'yes', 'terrace', 'semidetached_house', 'detached'].includes(t.building) && opp < 220;
+  if (huis) {
+    const cx = v.reduce((s, p) => s + p[0], 0) / v.length, cy = v.reduce((s, p) => s + p[1], 0) / v.length;
+    const h = dichtsteStraat(cx, cy).h, ux = Math.cos(h), uy = Math.sin(h), nx = -uy, ny = ux;
+    const ds = v.map(p => p[0] * nx + p[1] * ny), ts = v.map(p => p[0] * ux + p[1] * uy);
+    const c = (Math.min(...ds) + Math.max(...ds)) / 2, half = (Math.max(...ds) - Math.min(...ds)) / 2;
+    const t0 = Math.min(...ts), t1 = Math.max(...ts);
+    const nok = Math.min(half * 0.75, 4 * S);
+    if (half > 1.5 * S) dak = [Math.round(nok), Math.round(ux * t0 + nx * c), Math.round(uy * t0 + ny * c), Math.round(ux * t1 + nx * c), Math.round(uy * t1 + ny * c)];
+  }
+  gebouwen.push([Math.round(meter * S), kleur, ...dak, ...v.flat().map(Math.round)]);
 }
-
-/* ---------- 4. straten, parken en bomen ---------- */
-const ALLE = ['primary', 'secondary', 'tertiary', 'residential', 'living_street', 'unclassified', 'pedestrian', 'service'];
-const straten = [];
-for (const e of el) {
-  const t = e.tags || {};
-  if (!e.geometry || !ALLE.includes(t.highway)) continue;
-  const v = e.geometry.map(M).map(T);
-  if (!v.some(binnenVak)) continue;
-  const b = t.highway === 'primary' ? 9 : t.highway === 'tertiary' ? 7.5 : t.highway === 'service' ? 3.5 : 6;
-  straten.push([Math.round(b * S), ...v.flat().map(Math.round)]);
-}
-const parken = [];
-for (const e of el) {
-  const t = e.tags || {};
-  if (!e.geometry || !(t.leisure === 'park' || t.leisure === 'playground' || t.landuse === 'grass' || t.leisure === 'garden')) continue;
-  const v = e.geometry.map(M).map(T);
-  if (!v.some(binnenVak)) continue;
-  parken.push(v.flat().map(Math.round));
-}
-const bomen = [];
-for (const e of el) {
-  if (e.type !== 'node' || e.tags?.natural !== 'tree') continue;
-  const [x, y] = T(M(e));
-  if (!binnenVak([x, y]) || dichtste(x, y).d < GEVEL + 15) continue;
-  if (gebouwen.some(g => { const v = []; for (let i = 2; i < g.length; i += 2) v.push([g[i], g[i + 1]]); return binnenVeelhoek(x, y, v); })) continue;
-  bomen.push(Math.round(x), Math.round(y));
-}
-
-/* ---------- 5. hekken waar je de stad in zou kunnen rijden (zijstraten, open plekken) ---------- */
-const veelhoeken = gebouwen.map(g => { const v = []; for (let i = 2; i < g.length; i += 2) v.push([g[i], g[i + 1]]); return v; });
+const veelhoeken = gebouwen.map(g => { const v = []; for (let i = 7; i < g.length; i += 2) v.push([g[i], g[i + 1]]); return v; });
 const muurAfstand = (x, y) => {
   let best = Infinity;
   for (const v of veelhoeken) {
@@ -205,12 +214,46 @@ const muurAfstand = (x, y) => {
   }
   return best;
 };
+
+/* ---------- 5. parken en bomen ---------- */
+const parken = [], parkNamen = [];
+for (const e of el) {
+  const t = e.tags || {};
+  if (!e.geometry || !(t.leisure === 'park' || t.leisure === 'playground' || t.landuse === 'grass' || t.leisure === 'garden')) continue;
+  const v = e.geometry.map(M).map(T);
+  if (!v.some(binnenVak)) continue;
+  parken.push(v.flat().map(Math.round));
+  if (t.name && t.leisure === 'park') {
+    const cx = v.reduce((s, p) => s + p[0], 0) / v.length, cy = v.reduce((s, p) => s + p[1], 0) / v.length;
+    parkNamen.push([Math.round(cx), Math.round(cy), t.name]);
+  }
+}
+const bomen = [];
+const vrij = (x, y) => binnenVak([x, y]) && dichtste(x, y).d > GEVEL + 15 && muurAfstand(x, y) > 2 * S;
+for (const e of el) {
+  if (e.type !== 'node' || e.tags?.natural !== 'tree') continue;
+  const [x, y] = T(M(e));
+  if (vrij(x, y)) bomen.push(Math.round(x), Math.round(y));
+}
+// in de parken staan meer bomen dan op de kaart: vul ze aan (om de 9 m, een beetje verschoven), maar laat het midden open als speelweide
+for (const p of parken) {
+  const v = []; for (let i = 0; i < p.length; i += 2) v.push([p[i], p[i + 1]]);
+  const xs = v.map(q => q[0]), ys = v.map(q => q[1]), cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const straal = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.22;
+  let n = 0;
+  for (let x = Math.min(...xs); x < Math.max(...xs); x += 9 * S) for (let y = Math.min(...ys); y < Math.max(...ys); y += 9 * S) {
+    const jx = x + (hash(++n * 31) - 0.5) * 5 * S, jy = y + (hash(n * 57) - 0.5) * 5 * S;
+    if (binnenVeelhoek(jx, jy, v) && Math.hypot(jx - cx, jy - cy) > straal && vrij(jx, jy)) bomen.push(Math.round(jx), Math.round(jy));
+  }
+}
+
+/* ---------- 6. hekken waar je de stad in zou kunnen rijden (zijstraten, open plekken) ---------- */
+const normaal = i => { const q = pad[(i + 1) % pad.length], r = pad[(i - 1 + pad.length) % pad.length], h = Math.atan2(q[1] - r[1], q[0] - r[0]); return { h, nx: -Math.sin(h), ny: Math.cos(h) }; };
 const hekken = [];
 for (const kant of [-1, 1]) {
   let huidig = null;
   for (let n = 0; n <= pad.length; n++) {
-    const i = n % pad.length, p = pad[i], q = pad[(i + 1) % pad.length], r = pad[(i - 1 + pad.length) % pad.length];
-    const h = Math.atan2(q[1] - r[1], q[0] - r[0]), nx = -Math.sin(h), ny = Math.cos(h);
+    const i = n % pad.length, p = pad[i], { nx, ny } = normaal(i);
     const x = p[0] + nx * kant * (GRENS + 12), y = p[1] + ny * kant * (GRENS + 12);
     const open = dichtste(x, y).d > GRENS && muurAfstand(x, y) > 24;
     if (open) { if (!huidig) { huidig = []; hekken.push(huidig); } huidig.push(Math.round(x), Math.round(y)); }
@@ -218,13 +261,84 @@ for (const kant of [-1, 1]) {
   }
 }
 
+/* ---------- 7. geparkeerde auto's langs de stoep (waar huizen staan, niet aan kruispunten en niet aan de start) ---------- */
+const geparkeerd = [];
+const bocht = i => { const a = normaal((i - 10 + pad.length) % pad.length).h, b = normaal((i + 10) % pad.length).h; return Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a))); };
+for (const kant of [-1, 1]) {
+  let vrijTot = 0, n = 0;
+  for (let i = 0; i < pad.length; i++) {
+    if (i < vrijTot) continue;
+    if (i < 10 || i > pad.length - 4 || bocht(i) > 0.12) continue;
+    const p = pad[i], { h, nx, ny } = normaal(i);
+    const gx = p[0] + nx * kant * (GEVEL + 14), gy = p[1] + ny * kant * (GEVEL + 14);
+    // enkel waar er een huis staat (geen zijstraat) en waar de stoep vrij is tot 3 m voor en achter
+    const ok = [-3, 0, 3].every(k => { const j = (i + k * 2 + pad.length) % pad.length, q = pad[j], m = normaal(j); return muurAfstand(q[0] + m.nx * kant * (GEVEL + 14), q[1] + m.ny * kant * (GEVEL + 14)) < 20; });
+    if (!ok) continue;
+    if (hash(++n * 97 + (kant > 0 ? 5 : 0)) < 0.78) {
+      const x = p[0] + nx * kant * (BREED / 2 + PARKEER / 2 + 2), y = p[1] + ny * kant * (BREED / 2 + PARKEER / 2 + 2);
+      geparkeerd.push([Math.round(x), Math.round(y), Math.round(h * 100), Math.floor(hash(n * 13) * 8)]);
+    }
+    vrijTot = i + 5 + Math.floor(hash(n * 7) * 2);   // 5-6 punten verder = 4,6-5,5 m
+  }
+}
+
+/* ---------- 8. straatnamen: bordjes en namen op de kaart ---------- */
+const straatVanPunt = pad.map(([x, y]) => {   // welke straat van de route bij elk punt hoort
+  let best = Infinity, naam = '';
+  for (const s of routeStukken) for (let i = 1; i < s.pts.length; i++) {
+    const a = T(s.pts[i - 1]), b = T(s.pts[i]), dx = b[0] - a[0], dy = b[1] - a[1];
+    const f = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const d = Math.hypot(x - a[0] - dx * f, y - a[1] - dy * f);
+    if (d < best) { best = d; naam = s.naam; }
+  }
+  return naam;
+});
+const straatStukken = [];   // [beginpunt, naam]
+straatVanPunt.forEach((n, i) => { if (!straatStukken.length || straatStukken[straatStukken.length - 1][1] !== n) straatStukken.push([i, n]); });
+const namen = [], bordjes = [];
+// route: naam in het midden van elk stuk, en een bordje rechts kort na de hoek
+// (de start ligt midden in een straat: dan hoort het eerste stuk bij het laatste)
+const stukken = straatStukken.slice();
+if (stukken.length > 1 && stukken[0][1] === stukken[stukken.length - 1][1]) stukken.shift();
+for (let k = 0; k < stukken.length; k++) {
+  const [van, naam] = stukken[k], tot = k + 1 < stukken.length ? stukken[k + 1][0] : pad.length + stukken[0][0];
+  if (tot - van < 30) continue;
+  const mid = Math.floor((van + tot) / 2) % pad.length, p = pad[mid], { h } = normaal(mid);
+  namen.push([Math.round(p[0]), Math.round(p[1]), Math.round(h * 100), naam, 1]);
+  const b = (van + 22) % pad.length, q = pad[b], m = normaal(b);
+  bordjes.push([Math.round(q[0] + m.nx * (GEVEL - 12)), Math.round(q[1] + m.ny * (GEVEL - 12)), Math.round(m.h * 100), naam]);
+}
+// zijstraten: waar een andere straat de route raakt
+const gezien = new Set();
+for (const s of straatLijnen) {
+  if (!s.naam || ROUTE.includes(s.naam) || s.b < 4 * S) continue;
+  for (let i = 0; i < s.v.length; i++) {
+    const [x, y] = s.v[i], dd = dichtste(x, y);
+    if (dd.d > 45) continue;
+    const buur = s.v[i + 1] || s.v[i - 1]; if (!buur) continue;
+    const sh = Math.atan2(buur[1] - y, buur[0] - x), ux = Math.cos(sh), uy = Math.sin(sh);
+    const sleutel = s.naam + Math.round(x / 300) + ',' + Math.round(y / 300);
+    if (gezien.has(sleutel)) continue; gezien.add(sleutel);
+    // naam op de kaart een eind in de zijstraat
+    const lx = x + ux * (GEVEL + 160), ly = y + uy * (GEVEL + 160);
+    namen.push([Math.round(lx), Math.round(ly), Math.round(sh * 100), s.naam, 0]);
+    // bordje op de hoek van de zijstraat, naar de rijrichting van de route gedraaid
+    const m = normaal(dd.i), zij = Math.sign(ux * m.nx + uy * m.ny) || 1;
+    const px = -uy, py = ux;   // dwars op de zijstraat
+    const bx = x + ux * (GEVEL - 8) + px * (s.b / 2 + 30), by = y + uy * (GEVEL - 8) + py * (s.b / 2 + 30);
+    if (muurAfstand(bx, by) > 6 && dichtste(bx, by).d > BREED / 2 + PARKEER) bordjes.push([Math.round(bx), Math.round(by), Math.round(m.h * 100), s.naam]);
+    void zij;
+  }
+}
+
 const uit = {
   bron: 'Kaart © OpenStreetMap-bijdragers (ODbL), Acaciapark, Brugse Poort, Gent',
+  breed: BREED, gevel: GEVEL,
   lijn: pad.map(p => p.map(Math.round)),
   vak: Object.fromEntries(Object.entries(vak).map(([k, v]) => [k, Math.round(v)])),
-  gevel: GEVEL,
-  gebouwen, straten, parken, bomen: bomen, hekken: hekken.filter(h => h.length >= 4),
+  straatStukken, namen, bordjes, parkNamen,
+  gebouwen, straten, parken, bomen, geparkeerd, hekken: hekken.filter(h => h.length >= 4),
 };
 fs.writeFileSync(new URL('../stad-acacia.js', import.meta.url),
-  '// Gemaakt met tools/maak-stad.mjs. ' + uit.bron + '\nwindow.STAD_ACACIA = ' + JSON.stringify(uit) + ';\n');
-console.log(`weg ${Math.round(totaal)} eenheden (${Math.round(totaal / S)} m), ${N} punten; gebouwen ${gebouwen.length} (weggelaten ${weg}); straten ${straten.length}; parken ${parken.length}; bomen ${bomen.length / 2}; hekken ${uit.hekken.length}`);
+  '// Gemaakt met tools/maak-stad.mjs. ' + uit.bron + '\n// gebouw = [hoogte, kleur, nokhoogte, nok x1, y1, x2, y2, ...hoekpunten]; nokhoogte 0 = plat dak\nwindow.STAD_ACACIA = ' + JSON.stringify(uit) + ';\n');
+console.log(`weg ${Math.round(totaal)} eenheden (${Math.round(totaal / S)} m), ${N} punten; gebouwen ${gebouwen.length} (weggelaten ${weg}, zadeldak ${gebouwen.filter(g => g[2]).length}); straten ${straten.length}; bomen ${bomen.length / 2}; geparkeerd ${geparkeerd.length}; bordjes ${bordjes.length}; namen ${namen.map(n => n[3]).join(', ')}; hekken ${uit.hekken.length}`);

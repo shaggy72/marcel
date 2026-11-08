@@ -83,45 +83,123 @@ function maakFinishboog(p, breed) {
 /* ---------- Stad: huizen met ramen en dranghekken ---------- */
 const GEVEL = ['#a5553a', '#b86b4b', '#8e4a35', '#d2c3a8', '#ece6da', '#9c6b4e', '#8b817a', '#b4846c', '', '#9a8f80'];
 const DAKKLEUR = ['#7a3a2a', '#4f5359', '#8a4632', '#6b6e72', '#6e3326', '#55585c', '#8a5440', '#5e3a2e', '', '#7d7466'];
-function maakRaamTextuur() {   // één vak = één raam; de muurkleur komt van de kleur van het huis
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const x = c.getContext('2d');
-  x.fillStyle = '#fff'; x.fillRect(0, 0, 64, 64);
-  x.fillStyle = '#f4f4f4'; x.fillRect(14, 12, 36, 40);
-  x.fillStyle = '#34404d'; x.fillRect(18, 16, 28, 32);
-  x.fillStyle = '#5d7084'; x.fillRect(18, 16, 13, 14);
-  x.fillStyle = '#f4f4f4'; x.fillRect(30, 16, 3, 32); x.fillRect(18, 30, 28, 3);
+function textuur(teken, w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  teken(c.getContext('2d'));
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-function maakHuizen(gebouwen) {   // alle huizen samen in één vorm: muren met ramen en een plat dak
-  const pos = [], uv = [], kleur = [], c = new THREE.Color();
-  const RAAM = 64, VERDIEP = 56;   // breedte van een raamvak en hoogte van een verdieping (spel-eenheden)
+function baksteen(x, w, h) {   // wit met lichte voegen: de kleur van het huis maakt er baksteen van
+  x.fillStyle = '#fff'; x.fillRect(0, 0, w, h);
+  x.fillStyle = '#e2ddd8';
+  for (let y = 0; y < h; y += 4) { x.fillRect(0, y, w, 1); for (let k = (y / 4) % 2 ? 0 : 5; k < w; k += 10) x.fillRect(k, y, 1, 4); }
+}
+function raam(x, px, py, w, h) {
+  x.fillStyle = '#f1efe9'; x.fillRect(px - 3, py - 3, w + 6, h + 6);            // witte kozijnen
+  x.fillStyle = '#2f3a46'; x.fillRect(px, py, w, h);
+  x.fillStyle = '#5b6f84'; x.fillRect(px, py, w * 0.45, h * 0.4);               // weerspiegeling
+  x.fillStyle = '#f1efe9'; x.fillRect(px + w / 2 - 1.5, py, 3, h); x.fillRect(px, py + h * 0.38, w, 3);
+  x.fillStyle = '#cfc8bd'; x.fillRect(px - 5, py + h + 3, w + 10, 4);           // vensterbank
+}
+// benedenverdieping van één rijhuis: voordeur en een groot raam
+const deurTextuur = () => textuur(x => {
+  baksteen(x, 128, 64);
+  x.fillStyle = '#e8e4dc'; x.fillRect(12, 6, 30, 58);
+  x.fillStyle = '#3b4f6b'; x.fillRect(15, 9, 24, 55);                             // deur
+  x.fillStyle = '#93a6bb'; x.fillRect(19, 13, 16, 12);                            // ruitje in de deur
+  x.fillStyle = '#d4af37'; x.fillRect(34, 38, 3, 3);                              // klink
+  x.fillStyle = '#9d968b'; x.fillRect(10, 60, 34, 4);                             // dorpel
+  raam(x, 58, 14, 56, 36);
+}, 128, 64);
+const raamTextuur = () => textuur(x => { baksteen(x, 64, 64); raam(x, 14, 12, 36, 36); }, 64, 64);
+
+// Alle huizen samen in één vorm (snel): benedenverdieping met deuren, verdiepingen met ramen, en de daken.
+function maakHuizen(gebouwen, dakVorm) {
+  const delen = [0, 1, 2].map(() => ({ pos: [], uv: [], kleur: [] }));   // 0 = beneden, 1 = boven, 2 = dak
+  const c = new THREE.Color(), V = 42, HUIS = 77;   // V = hoogte van een verdieping, HUIS = breedte van een rijhuis
+  const zet = (d, x, y, z, u, v) => { d.pos.push(x, y, z); d.uv.push(u, v); d.kleur.push(c.r, c.g, c.b); };
+  const quad = (d, a, b, y0a, y0b, y1a, y1b, u0, u1, v0a, v0b, v1a, v1b) => {
+    zet(d, a[0], y0a, a[1], u0, v0a); zet(d, b[0], y0b, b[1], u1, v0b); zet(d, b[0], y1b, b[1], u1, v1b);
+    zet(d, a[0], y0a, a[1], u0, v0a); zet(d, b[0], y1b, b[1], u1, v1b); zet(d, a[0], y1a, a[1], u0, v1a);
+  };
   for (const g of gebouwen) {
-    const h = g[0], k = g[1], v = [];
-    for (let i = 2; i < g.length; i += 2) v.push(new THREE.Vector2(g[i], g[i + 1]));
-    const laag = k === 9;
+    const k = g[1], laag = k === 9 || g[0] < V * 1.5, vorm = dakVorm(g), p = vorm.pts;
     c.set(GEVEL[k]);
     let u = 0;
-    for (let i = 0; i < v.length; i++) {
-      const a = v[i], b = v[(i + 1) % v.length], l = a.distanceTo(b);
-      const u0 = laag ? 0.02 : u / RAAM, u1 = laag ? 0.02 : (u + l) / RAAM, top = laag ? 0.02 : h / VERDIEP;
-      const hoek = [[a, 0, u0, 0], [b, 0, u1, 0], [b, h, u1, top], [a, 0, u0, 0], [b, h, u1, top], [a, h, u0, top]];
-      for (const [p, y, uu, vv] of hoek) { pos.push(p.x, y, p.y); uv.push(uu, vv); kleur.push(c.r, c.g, c.b); }
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], b = p[(i + 1) % p.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (laag) quad(delen[1], a, b, 0, 0, a[2], b[2], 0.02, 0.02, 0.02, 0.02, 0.02, 0.02);
+      else {
+        quad(delen[0], a, b, 0, 0, V, V, u / HUIS, (u + l) / HUIS, 0, 0, 1, 1);
+        quad(delen[1], a, b, V, V, a[2], b[2], u / (HUIS / 2), (u + l) / (HUIS / 2), 0, 0, (a[2] - V) / V, (b[2] - V) / V);
+      }
       u += l;
     }
     c.set(DAKKLEUR[k]);
-    for (const [i, j, l] of THREE.ShapeUtils.triangulateShape(v, []))
-      for (const p of [v[i], v[l], v[j]]) { pos.push(p.x, h, p.y); uv.push(0.02, 0.02); kleur.push(c.r, c.g, c.b); }
+    for (const helft of vorm.helften) {
+      if (helft.length < 3) continue;
+      const v2 = helft.map(q => new THREE.Vector2(q[0], q[1]));
+      for (const [i, j, l] of THREE.ShapeUtils.triangulateShape(v2, []))
+        for (const q of [helft[i], helft[l], helft[j]]) zet(delen[2], q[0], q[2], q[1], 0, 0);
+    }
   }
-  const geo = new THREE.BufferGeometry();
+  const geo = new THREE.BufferGeometry(), pos = [], uv = [], kleur = [];
+  let begin = 0;
+  delen.forEach((d, n) => {
+    for (const x of d.pos) pos.push(x);   // geen push(...lijst): te veel waarden voor de browser
+    for (const x of d.uv) uv.push(x);
+    for (const x of d.kleur) kleur.push(x);
+    geo.addGroup(begin, d.pos.length / 3, n); begin += d.pos.length / 3;
+  });
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(kleur, 3));
   geo.computeVertexNormals();
   // muren kunnen met de klok mee of tegen de klok in getekend zijn: daarom beide kanten tekenen
-  return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: maakRaamTextuur(), vertexColors: true, side: THREE.DoubleSide }));
+  const mat = map => new THREE.MeshLambertMaterial({ map, vertexColors: true, side: THREE.DoubleSide });
+  return new THREE.Mesh(geo, [mat(deurTextuur()), mat(raamTextuur()), mat(null)]);
+}
+
+const PARKKLEUR = ['#d9d9d9', '#2b2b2b', '#f2f2f2', '#7f8c8d', '#2c3e72', '#8e1b1b', '#bdc3c7', '#3d5a40'];
+function maakGeparkeerd(lijst) {   // geparkeerde auto's: carrosserie en ramen
+  const g = new THREE.Group();
+  const delen = [[new THREE.BoxGeometry(48, 12, 25), 9, null], [new THREE.BoxGeometry(26, 10, 22), 20, '#26313d'], [new THREE.CylinderGeometry(6, 6, 27, 10).rotateX(Math.PI / 2), 6, '#151515']];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), as = new THREE.Vector3(0, 1, 0), c = new THREE.Color(), een = new THREE.Vector3(1, 1, 1);
+  for (const [geo, y, kleur] of delen) {
+    const wielen = kleur === '#151515', aantal = lijst.length * (wielen ? 2 : 1);
+    const im = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff }), aantal);
+    let n = 0;
+    for (const [x, z, h, k] of lijst) {
+      const a = h / 100;
+      q.setFromAxisAngle(as, -a);
+      for (const dx of wielen ? [-15, 15] : [-2]) {
+        m4.compose(new THREE.Vector3(x + Math.cos(a) * dx, y, z + Math.sin(a) * dx), q, een);
+        im.setMatrixAt(n, m4); im.setColorAt(n++, c.set(kleur || PARKKLEUR[k]));
+      }
+    }
+    g.add(im);
+  }
+  return g;
+}
+function maakBordjes(bordjes) {   // blauwe straatnaambordjes op een paal, gedraaid naar wie aankomt
+  const g = new THREE.Group(), paalMat = new THREE.MeshLambertMaterial({ color: 0x8a8f96 }), paal = new THREE.CylinderGeometry(1.6, 1.6, 74, 6);
+  for (const [x, y, h, naam] of bordjes) {
+    const c = document.createElement('canvas'), w = Math.max(256, 40 + naam.length * 26); c.width = w; c.height = 64;
+    const t = c.getContext('2d');
+    t.fillStyle = '#1f4e9c'; t.fillRect(0, 0, w, 64);
+    t.strokeStyle = '#fff'; t.lineWidth = 5; t.strokeRect(6, 6, w - 12, 52);
+    t.fillStyle = '#fff'; t.font = 'bold 36px system-ui, sans-serif'; t.textAlign = 'center'; t.textBaseline = 'middle'; t.fillText(naam, w / 2, 34);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const breedte = w / 64 * 20, a = h / 100, draai = Math.atan2(-Math.cos(a), -Math.sin(a));
+    const p = new THREE.Mesh(paal, paalMat); p.position.set(x, 37, y); g.add(p);
+    for (const kant of [0, Math.PI]) {   // voor- en achterkant, allebei leesbaar
+      const plaat = new THREE.Mesh(new THREE.PlaneGeometry(breedte, 20), new THREE.MeshBasicMaterial({ map: tex }));
+      const z = kant ? 0.6 : -0.6; plaat.position.set(x + Math.cos(a) * z, 66, y + Math.sin(a) * z);
+      plaat.rotation.y = draai + kant; g.add(plaat);
+    }
+  }
+  return g;
 }
 function maakHekken(hekken) {   // rood-witte dranghekken waar een zijstraat of open plek is
   const stukken = [];
@@ -150,7 +228,7 @@ export function maakDrie(canvas) {
   let wereld = null, modellen = [], kleuren = '', camHoek = null, inHuis = null;
   const camPos = new THREE.Vector3(), kijk = new THREE.Vector3();
 
-  function bouw({ circuit, thema, themaNaam, textuur, versiering, pad, breed, inHuis: inHuisFn }) {
+  function bouw({ circuit, thema, themaNaam, textuur, versiering, pad, breed, inHuis: inHuisFn, dakVorm }) {
     if (wereld) { scene.remove(wereld); wereld.traverse(o => { if (o.material?.map) o.material.map.dispose(); }); }
     wereld = new THREE.Group(); scene.add(wereld);
     const lucht = LUCHT[themaNaam] ?? 0x9fd4ff;
@@ -191,7 +269,10 @@ export function maakDrie(canvas) {
       wereld.add(im);
     }
     wereld.add(maakFinishboog(pad[0], breed));
-    if (circuit.stad) { wereld.add(maakHuizen(circuit.stad.gebouwen)); wereld.add(maakHekken(circuit.stad.hekken)); }
+    if (circuit.stad) {
+      wereld.add(maakHuizen(circuit.stad.gebouwen, dakVorm)); wereld.add(maakHekken(circuit.stad.hekken));
+      wereld.add(maakGeparkeerd(circuit.stad.geparkeerd)); wereld.add(maakBordjes(circuit.stad.bordjes));
+    }
     inHuis = circuit.stad ? inHuisFn : null;
     camHoek = null;
   }
