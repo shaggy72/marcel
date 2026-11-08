@@ -60,6 +60,11 @@
   #pauzeKnop { position:fixed; z-index:3; top:calc(10px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
                font:inherit; font-size:22px; font-weight:800; width:56px; height:48px; border:3px solid #fff9; border-radius:14px;
                background:#0006; color:#fff; cursor:pointer; touch-action:manipulation; }
+  /* geluidsknop: altijd zichtbaar; tijdens de race naast de pauzeknop, anders rechtsboven */
+  #geluidKnop { position:fixed; z-index:4; top:calc(10px + env(safe-area-inset-top)); left:calc(50% + 34px);
+                font:inherit; font-size:22px; width:56px; height:48px; border:3px solid #fff9; border-radius:14px;
+                background:#0006; color:#fff; cursor:pointer; touch-action:manipulation; padding:0; }
+  #pauzeKnop[hidden] ~ #geluidKnop { left:auto; right:calc(12px + env(safe-area-inset-right)); }
   #straat { position:fixed; z-index:2; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom));
             background:#1f4e9c; color:#fff; font-weight:800; font-size:18px; padding:6px 14px; border-radius:6px; border:2px solid #fff;
             box-shadow:0 2px 6px #0007; pointer-events:none; white-space:nowrap; }
@@ -73,6 +78,7 @@
 <div id="hud" hidden></div>
 <div id="aftellen" hidden></div>
 <button id="pauzeKnop" hidden aria-label="Pauze">⏸</button>
+<button id="geluidKnop" aria-label="Geluid aan of uit">🔊</button>
 <div id="straat" hidden></div>
 
 <div class="knoppen links" hidden><div class="knop" data-k="links">◀</div><div class="knop" data-k="rechts">▶</div></div>
@@ -92,7 +98,7 @@
   <button class="groot" id="start">Start!</button>
   <a href="index.html" class="klein" style="text-decoration:none;color:#fff;padding:8px 16px;border-radius:12px;background:#fff3">🏠 Terug naar het begin</a>
   <p>Rijd 3 rondes en kom als eerste over de finish. Blijf op de weg: naast de weg ga je trager!<br>
-     ⌨️ Pijltjes, of Z Q S D (azerty) / W A S D (qwerty) · Esc = pauze · 📱 Tablet: knoppen onderaan</p>
+     ⌨️ Pijltjes, of Z Q S D (azerty) / W A S D (qwerty) · Esc = pauze · M = geluid aan/uit · 📱 Tablet: knoppen onderaan</p>
   <p class="alleenAanraak">📱 Tip: hou je telefoon dwars, dan zie je meer van het circuit. Linkerduim stuurt, rechterduim geeft gas.</p>
 </div>
 
@@ -102,7 +108,7 @@
   <button class="klein" id="herstart">🔄 Opnieuw beginnen</button>
   <button class="klein" id="pauzeMenu">🏁 Ander circuit kiezen</button>
   <a href="index.html" class="klein" style="text-decoration:none;color:#fff;padding:8px 16px;border-radius:12px;background:#fff3">🏠 Terug naar het begin</a>
-  <p>Tip: met Esc of P zet je het spel ook op pauze.</p>
+  <p>Tip: met Esc of P zet je het spel ook op pauze. Met 🔊 (of M) zet je het geluid aan of uit.</p>
 </div>
 
 <div class="scherm" id="einde" hidden>
@@ -114,6 +120,7 @@
 </div>
 
 <script src="stad-acacia.js"></script>
+<script src="race-geluid.js"></script>
 <script>
 // Oudere iPhones/iPads (iOS 15 en ouder) kennen roundRect niet: dan zelf tekenen
 if (!CanvasRenderingContext2D.prototype.roundRect) CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
@@ -285,7 +292,7 @@ function muurBotsing(a) {   // duwt de auto uit een huis en remt hem af; geeft t
     const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
     a.x = bx + ux * AUTO_STRAAL; a.y = by + uy * AUTO_STRAAL;
     const tegen = -(Math.cos(a.a) * ux + Math.sin(a.a) * uy) * a.v;   // hoe hard je recht op de muur rijdt
-    if (tegen > 0) a.v *= tegen > 180 ? 0.35 : 0.85;
+    if (tegen > 0) { a.v *= tegen > 180 ? 0.35 : 0.85; a.klap = Math.max(a.klap || 0, tegen); }
     geraakt = true;
   }
   return geraakt;
@@ -315,6 +322,8 @@ const TOETSEN = { arrowleft:'links', arrowright:'rechts', arrowup:'gas', arrowdo
 const welkeToets = e => TOETSEN[(e.key || '').toLowerCase()];
 addEventListener('keydown', e => {
   if ((e.key === 'Escape' || e.key === 'p' || e.key === 'P') && !e.repeat) { if (fase === 'pauze') verder(); else pauze(); return; }
+  if ((e.key === 'm' || e.key === 'M') && !e.repeat) { zetGeluid(!Geluid.aan); return; }
+  if (fase !== 'pauze') Geluid.ontgrendel();
   const t = welkeToets(e); if (t) { toets[t] = true; e.preventDefault(); }
 });
 addEventListener('keyup', e => { const t = welkeToets(e); if (t) { toets[t] = false; e.preventDefault(); } });
@@ -342,6 +351,7 @@ function rijd(a, dt) {
     const wil = a.max * (1 - Math.min(0.5, bocht * 0.42));
     gas = a.v < wil; rem = a.v > wil + 40;
   } else { gas = toets.gas; rem = toets.rem; stuur = (toets.rechts ? 1 : 0) - (toets.links ? 1 : 0); }
+  a.stuur = stuur; a.gasAan = gas; a.opWeg = opWeg;   // voor het geluid
 
   const max = opWeg ? (a.ai ? a.max : 570) : 230;
   if (gas) a.v += 400 * dt;
@@ -354,8 +364,10 @@ function rijd(a, dt) {
 
   const grens = BREED / 2 + 150, p = pad[i];   // verder dan dit kan je niet van de weg
   if (d > grens) { a.x = p.x + (a.x - p.x) * grens / d; a.y = p.y + (a.y - p.y) * grens / d; a.v *= 0.5; }
+  const vorigeKlap = a.klap || 0; a.klap = 0;
   if (muren && muurBotsing(a)) {
     a.muur = (a.muur || 0) + 1;
+    if (a === speler && a.klap > 60 && (vorigeKlap === 0 || a.klap > 250)) Geluid.klap(a.klap / 400);
     if (Math.random() < 0.4) stof.push({ x: a.x + Math.cos(a.a) * 22, y: a.y + Math.sin(a.a) * 22, r: 5, t: 0.4 });
   }
   if (!opWeg && Math.abs(a.v) > 60 && Math.random() < 0.5)
@@ -365,6 +377,7 @@ function rijd(a, dt) {
   if (i > N * 0.4 && i < N * 0.6) a.half = true;
   if (a.vorige !== undefined && a.vorige > N * 0.9 && i < N * 0.1 && a.half) {
     a.ronde++; a.half = false;
+    if (a === speler && a.ronde < RONDES) Geluid.ronde(a.ronde === RONDES - 1);
     if (a.ronde >= RONDES && !a.klaar) { a.klaar = true; a.eindtijd = tijd; finishVolgorde.push(a); }
   }
   a.vorige = i;
@@ -377,6 +390,7 @@ function botsen() {
       const duw = (36 - d) / 2, ux = dx / d, uy = dy / d;
       a.x -= ux * duw; a.y -= uy * duw; b.x += ux * duw; b.y += uy * duw;
       a.v *= 0.97; b.v *= 0.97;
+      if (a === speler || b === speler) Geluid.duw();
     }
   }
 }
@@ -662,7 +676,9 @@ function lus(nu) {
   if (fase === 'aftellen') {
     aftel -= dt;
     const el = document.getElementById('aftellen');
-    el.hidden = false; el.textContent = aftel > 0 ? Math.ceil(aftel) : 'GO!';
+    const tekst = aftel > 0 ? Math.ceil(aftel) : 'GO!';
+    if (el.hidden || el.textContent !== String(tekst)) Geluid.aftel(aftel > 0 ? tekst : 0);
+    el.hidden = false; el.textContent = tekst;
     if (aftel <= 0) fase = 'race';
   }
   if (fase === 'race' || fase === 'klaar') {
@@ -670,8 +686,9 @@ function lus(nu) {
     tijd += dt;
     autos.forEach(a => rijd(a, dt));
     botsen();
-    if (fase === 'race' && speler.klaar) { fase = 'klaar'; setTimeout(toonEinde, 1800); }
+    if (fase === 'race' && speler.klaar) { fase = 'klaar'; Geluid.finish(finishVolgorde[0] === speler); setTimeout(toonEinde, 1800); }
   }
+  Geluid.rijden(speler, autos, speler.opWeg !== false, ['aftellen', 'race', 'klaar'].includes(fase) && document.getElementById('einde').hidden);
   stof.forEach(s => { s.t -= dt; s.r += dt * 14; }); stof = stof.filter(s => s.t > 0);
 
   const in3d = camera === 'achter' && drie && drieCircuit === C && fase !== 'menu' && fase !== 'laden';
@@ -710,6 +727,7 @@ function toonEinde() {
 }
 
 function start() {
+  Geluid.ontgrendel();   // iPhone/iPad: geluid mag pas na een tik
   document.getElementById('menu').hidden = true;
   document.getElementById('einde').hidden = true;
   document.getElementById('hud').hidden = false;
@@ -739,7 +757,7 @@ let startTeller = 0;
 let faseVoorPauze = null;
 function pauze() {
   if (!['aftellen', 'race', 'laden'].includes(fase)) return;
-  faseVoorPauze = fase; fase = 'pauze';
+  faseVoorPauze = fase; fase = 'pauze'; Geluid.stop();
   for (const k in toets) toets[k] = false;
   document.querySelectorAll('.knop').forEach(k => k.classList.remove('aan'));
   document.querySelectorAll('.knoppen').forEach(k => k.hidden = true);
@@ -749,7 +767,7 @@ function pauze() {
 function verder() {
   document.getElementById('pauze').hidden = true;
   if (faseVoorPauze === 'laden') { start(); return; }   // het laden van 3D was nog bezig: gewoon opnieuw starten
-  fase = faseVoorPauze; vorigeTijd = performance.now();
+  fase = faseVoorPauze; vorigeTijd = performance.now(); Geluid.ontgrendel();
   document.querySelectorAll('.knoppen').forEach(k => k.hidden = false);
   document.getElementById('pauzeKnop').hidden = false;
 }
@@ -758,6 +776,14 @@ document.getElementById('verder').onclick = verder;
 document.getElementById('herstart').onclick = () => { document.getElementById('pauze').hidden = true; start(); };
 document.getElementById('pauzeMenu').onclick = () => { document.getElementById('pauze').hidden = true; toonMenu(); };
 document.addEventListener('visibilitychange', () => { if (document.hidden && fase === 'race') pauze(); });   // app verlaten = pauze
+
+function zetGeluid(ja, eerste) {
+  if (!eerste) Geluid.zetAan(ja);
+  const k = document.getElementById('geluidKnop');
+  k.textContent = ja ? '🔊' : '🔇'; k.title = ja ? 'Geluid uit zetten (M)' : 'Geluid aan zetten (M)';
+}
+document.getElementById('geluidKnop').onclick = e => { zetGeluid(!Geluid.aan); e.currentTarget.blur(); };
+zetGeluid(Geluid.aan, true);
 
 function zetCamera(c) {
   camera = c; localStorage.setItem('raceCamera', c);

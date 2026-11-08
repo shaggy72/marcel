@@ -6,6 +6,10 @@ Spelletjes en hulpmiddelen die Marcel (9 jaar) zelf bedacht heeft.
 - `kampbouwer.html` + `animatie.js`: knopen leren (met animaties) en een kamp ontwerpen
 - `race.html`: racespel met 7 circuits; camera "van boven" (2D) of "achter de auto" (3D)
   Besturing: pijltjes, Z Q S D (azerty) of W A S D (qwerty); Esc, P of de ⏸-knop zet het spel op pauze (verder, opnieuw, ander circuit, terug).
+- `race-geluid.js`: geluid van het racespel, helemaal gemaakt met Web Audio (geen geluidsbestanden): motor met versnellingen,
+  de dichtste tegenstander, grind naast de weg, piepende banden, klap tegen een huis of auto, aftellen, rondes en finish.
+  De 🔊-knop (of M) zet het geluid altijd aan of uit; de keuze wordt onthouden. Pauze = stil.
+  Testen: `Geluid.toestand` in de console toont of het geluid draait en hoe luid motor, grind en banden staan.
 - `stad-acacia.js`: het stadscircuit rond het Acaciapark (Brugse Poort, Gent) met echte straten, huizen (= muren, met zadeldak en voordeur),
   geparkeerde auto's (ook muren), straatnaambordjes, de straatnaam onderaan in beeld, en bomen (in het park aangevuld).
 - `stad-acacia-foto.jpg` (computer) en `stad-acacia-foto-klein.jpg` (iPhone/iPad): luchtfoto voor de grond en de 3D-daken.
